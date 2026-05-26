@@ -178,34 +178,7 @@
   <button class="b on" id="btnTAJ" title="Justify" style="min-width:22px;font-size:10px">⊞</button>
 </div>
 
-<div class="toolbar sub" id="revealBar" style="display:none;flex-direction:column;align-items:stretch;padding:6px 10px;gap:4px">
-  <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
-    <button class="b" id="revAddBox" style="font-size:13px;min-width:24px" title="Add box">+ Add</button>
-    <button class="b" id="revToggleBoxes" style="font-size:10px;min-width:20px" title="Show/hide boxes">▼</button>
-    <div class="sep"></div>
-    <label style="font-size:10px;color:var(--txd)">Speed</label>
-    <input type="range" id="revSpeed" min="1" max="20" value="5" style="width:50px">
-    <input type="number" id="revSpeedN" class="num" value="0.5" min="0.1" max="2.0" step="0.1" style="width:42px">
-    <button class="b" id="revAuto">▶ Auto</button>
-    <div class="sep"></div>
-    <span id="revStatus" style="font-size:10px;color:var(--txd);white-space:nowrap">Select a box, click canvas</span>
-  </div>
-  <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
-    <button class="b" id="btnPrompt" title="Show/hide prompt on screen">📌 Prompt</button>
-    <button class="b" id="btnBakePrompt" title="Write prompt to canvas" style="font-size:10px">📎 Bake</button>
-    <textarea id="promptText" rows="1" placeholder="Prompt text (Shift+Enter for newline)" style="flex:1;min-height:26px;max-height:60px;padding:2px 8px;font-size:12px;background:var(--sf3);color:var(--tx);border:1px solid #3a3a44;border-radius:4px;font-family:inherit;outline:none;resize:vertical;line-height:1.3"></textarea>
-    <input type="number" id="promptSize" class="num" value="20" min="10" max="60" step="2" title="Prompt font size" style="width:42px">
-    <label style="font-size:9px;color:var(--txd)">BG</label>
-    <input type="color" id="promptBg" value="#000000" title="Prompt background" style="width:24px;height:24px;border:none;background:none;cursor:pointer">
-    <label style="font-size:9px;color:var(--txd)">FG</label>
-    <input type="color" id="promptFg" value="#ffffff" title="Prompt text color" style="width:24px;height:24px;border:none;background:none;cursor:pointer">
-    <input type="range" id="promptAlpha" min="0" max="100" value="75" title="Background opacity (0=none)" style="width:40px">
-    <button class="b on" id="pAlignL" title="Left" style="min-width:22px;font-size:11px">≡←</button>
-    <button class="b" id="pAlignC" title="Center" style="min-width:22px;font-size:11px">≡</button>
-    <button class="b" id="pAlignR" title="Right" style="min-width:22px;font-size:11px">→≡</button>
-  </div>
-  <div id="revBoxes" style="display:flex;flex-direction:column;gap:3px;max-height:80px;overflow-y:auto"></div>
-</div>
+<div id="revealBar" style="display:none"></div>
 
 <div class="canvas-area">
   <div class="welcome" id="welcome">
@@ -358,6 +331,8 @@ const S={pdf:null,pdfData:null,currentPage:1,totalPages:0,scale:1.5,zoom:1.0,wor
   drawing:false,lastX:0,lastY:0,annotations:{},undoStack:{},redoStack:{},laserStrokes:[],animating:false,editIdx:-1,textAlign:'justify',textLH:1.25,
   showGrid:false,selectSet:new Set(),showPrompt:false,promptText:'',promptSize:20,promptBg:'#000000',promptFg:'#ffffff',promptAlpha:0.75,promptScreenX:null,promptScreenY:null,promptAlign:'left',
   scaleSnap:null,cursorX:-1,cursorY:-1,clipboard:[],imgCache:{}}; // snapshot of selected items for scaling
+window.S=S; // expose for Present window and Type popup
+window.REV=null; // will be set after REV is defined
 
 /* ── Colors ── */
 ['#e05555','#ff8c42','#f5d642','#50c878','#3b9eff','#7c5cbf','#1a1a1a','#888888','#bbbbbb','#ffffff'].forEach(c=>{
@@ -379,7 +354,8 @@ function setTool(t){S.tool=t;hideTO();
   dC.style.cursor=t==='select'?'default':t==='text'||t==='reveal'?'text':t==='eraser'?'grab':'crosshair';
   $('#fadeG').style.display=t==='laser'?'flex':'none';
   $('#textBar').style.display=(t==='text'||t==='reveal')?'flex':'none';
-  $('#revealBar').style.display=t==='reveal'?'flex':'none';
+  $('#revealBar').style.display='none'; // hidden div, not used
+  if(t==='reveal') openTypeWindow();
   if(S.showPrompt) replay();
   if(t==='select') updateSelectTextBar();
 }
@@ -574,11 +550,9 @@ async function renderPage(){
   replay();updPI();applyZoom();
 }
 function applyZoom(){
-  const wrap=$('#canvasWrap');
-  wrap.style.transform='scale('+S.zoom+')';
-  wrap.style.transformOrigin='top left';
-  wrap.style.width=(dC.width||WB_W)+'px';
-  wrap.style.height=(dC.height||WB_H)+'px';
+  const w=dC.width*S.zoom, h=dC.height*S.zoom;
+  pC.style.width=w+'px';pC.style.height=h+'px';
+  dC.style.width=w+'px';dC.style.height=h+'px';
 }
 function drawGrid(w,h){
   const step=40;
@@ -638,8 +612,6 @@ function replay(){
     lines.forEach((l,i)=>dX.fillText(l,REV.x,REV.y+(i+1)*lh));
     dX.restore();
   }
-  // Draw cursor on canvas (visible in Present window)
-  drawCanvasCursor();
 }
 function wrapText(ctx,text,maxW){
   const result=[];
@@ -1000,9 +972,6 @@ dC.addEventListener('mousedown',e=>{
 
 dC.addEventListener('mousemove',e=>{
   const cp=gP(e);S.cursorX=cp.x;S.cursorY=cp.y;
-  if(!S.drawing&&!S.animating){
-    if(!S._cursorRAF){S._cursorRAF=requestAnimationFrame(()=>{S._cursorRAF=null;replay();});}
-  }
   if(S.tool==='select'&&!S.drawing&&S.showPrompt&&S.promptText){
     const pos=gP(e);if(hitPrompt(pos)){dC.style.cursor='move';return;}
   }
@@ -1110,7 +1079,7 @@ function finStr(){
   curStr=null;S.drawing=false;
 }
 dC.addEventListener('mouseup',finStr);
-dC.addEventListener('mouseleave',()=>{S.cursorX=-1;S.cursorY=-1;replay();if(selectDrag&&selectDrag.moved){selectDrag=null;S.drawing=false;}else if(textDrag&&textDrag.moved){textDrag=null;S.drawing=false;}else finStr();});
+dC.addEventListener('mouseleave',()=>{S.cursorX=-1;S.cursorY=-1;if(selectDrag&&selectDrag.moved){selectDrag=null;S.drawing=false;}else if(textDrag&&textDrag.moved){textDrag=null;S.drawing=false;}else finStr();});
 
 /* ── Touch support (iPad / tablet) ── */
 function touchToMouse(e){
@@ -1142,7 +1111,6 @@ function animLA(){
     dX.restore();
   }
   drawPrompt();
-  drawCanvasCursor();
   if(S.laserStrokes.length>0) requestAnimationFrame(animLA);else S.animating=false;
 }
 
@@ -1324,15 +1292,12 @@ sessionInput.onchange=async e=>{
     // Restore Prompt
     if(raw.prompt){
       const p=raw.prompt;
-      S.promptText=p.text||'';$('#promptText').value=S.promptText;
-      S.promptSize=p.size||20;$('#promptSize').value=S.promptSize;
-      S.promptBg=p.bg||'#000000';$('#promptBg').value=S.promptBg;
-      S.promptFg=p.fg||'#ffffff';$('#promptFg').value=S.promptFg;
-      S.promptAlpha=p.alpha!==undefined?p.alpha:0.75;$('#promptAlpha').value=Math.round(S.promptAlpha*100);
+      S.promptText=p.text||'';
+      S.promptSize=p.size||20;
+      S.promptBg=p.bg||'#000000';
+      S.promptFg=p.fg||'#ffffff';
+      S.promptAlpha=p.alpha!==undefined?p.alpha:0.75;
       S.promptAlign=p.align||'left';
-      ['pAlignL','pAlignC','pAlignR'].forEach(id=>$('#'+id).classList.remove('on'));
-      const am={left:'pAlignL',center:'pAlignC',right:'pAlignR'};
-      if(am[S.promptAlign]) $('#'+am[S.promptAlign]).classList.add('on');
     }
   }catch(err){alert('Failed to load session: '+err.message);}
   e.target.value='';
@@ -1402,15 +1367,12 @@ async function autoRestore(){
     // Restore Prompt
     const savedPrompt=await asGet('prompt');
     if(savedPrompt){
-      S.promptText=savedPrompt.text||'';$('#promptText').value=S.promptText;
-      S.promptSize=savedPrompt.size||20;$('#promptSize').value=S.promptSize;
-      S.promptBg=savedPrompt.bg||'#000000';$('#promptBg').value=S.promptBg;
-      S.promptFg=savedPrompt.fg||'#ffffff';$('#promptFg').value=S.promptFg;
-      S.promptAlpha=savedPrompt.alpha!==undefined?savedPrompt.alpha:0.75;$('#promptAlpha').value=Math.round(S.promptAlpha*100);
+      S.promptText=savedPrompt.text||'';
+      S.promptSize=savedPrompt.size||20;
+      S.promptBg=savedPrompt.bg||'#000000';
+      S.promptFg=savedPrompt.fg||'#ffffff';
+      S.promptAlpha=savedPrompt.alpha!==undefined?savedPrompt.alpha:0.75;
       S.promptAlign=savedPrompt.align||'left';
-      ['pAlignL','pAlignC','pAlignR'].forEach(id=>$('#'+id).classList.remove('on'));
-      const am={left:'pAlignL',center:'pAlignC',right:'pAlignR'};
-      if(am[S.promptAlign]) $('#'+am[S.promptAlign]).classList.add('on');
     }
     return true;
   }catch(e){
@@ -1474,6 +1436,7 @@ $('#btnSave').onclick=async()=>{
 
 /* ── Type Mode (multi-box) ── */
 const REV={boxes:[],selIdx:-1,tokens:[],idx:0,x:0,y:0,active:false,autoTimer:null,speed:0.5};
+window.REV=REV;
 
 function tokenize(text){
   const tokens=[];
@@ -1510,9 +1473,9 @@ function selectRevBox(idx){
   });
   const b=REV.boxes[idx];
   if(b.status==='done'){
-    $('#revStatus').textContent='#'+(idx+1)+' done \u2014 click canvas to redo';
+    REV._statusText='#'+(idx+1)+' done \u2014 click canvas to redo';
   }else{
-    $('#revStatus').textContent='#'+(idx+1)+' selected \u2014 click canvas to place';
+    REV._statusText='#'+(idx+1)+' selected \u2014 click canvas to place';
   }
 }
 
@@ -1522,11 +1485,13 @@ function resetRevBox(idx){
   REV.selIdx=idx;
   renderRevBoxes();
   replay();
-  $('#revStatus').textContent='#'+(idx+1)+' reset \u2014 click canvas to place';
+  REV._statusText='#'+(idx+1)+' reset \u2014 click canvas to place';
 }
 
 function renderRevBoxes(){
-  const cont=$('#revBoxes');cont.innerHTML='';
+  const cont=$('#revBoxes');
+  if(!cont) return; // UI is in popup window
+  cont.innerHTML='';
   REV.boxes.forEach((b,i)=>{
     const div=document.createElement('div');
     div.className='rev-box'+(i===REV.selIdx?' sel':'')+(b.status==='done'?' done':'');
@@ -1544,57 +1509,148 @@ function renderRevBoxes(){
   });
 }
 
-$('#revAddBox').onclick=()=>addRevBox('');
-$('#revToggleBoxes').onclick=()=>{
-  const el=$('#revBoxes');
-  if(el.style.display==='none'){el.style.display='flex';$('#revToggleBoxes').textContent='▼';}
-  else{el.style.display='none';$('#revToggleBoxes').textContent='▶';}
-};
-
-// Prompt handlers
-$('#btnPrompt').onclick=()=>{S.showPrompt=!S.showPrompt;$('#btnPrompt').classList.toggle('on',S.showPrompt);if(S.showPrompt){S.promptScreenX=null;S.promptScreenY=null;}replay();};
-$('#promptText').oninput=e=>{S.promptText=e.target.value;replay();autoSave();};
-$('#promptText').addEventListener('keydown',e=>{
-  if(e.key==='Enter'&&!e.shiftKey) e.preventDefault();
-  e.stopPropagation();
-});
-$('#promptSize').oninput=e=>{S.promptSize=Math.max(10,Math.min(60,+e.target.value));replay();};
-$('#promptSize').addEventListener('keydown',e=>e.stopPropagation());
-$('#promptBg').oninput=e=>{S.promptBg=e.target.value;replay();};
-$('#promptFg').oninput=e=>{S.promptFg=e.target.value;replay();};
-$('#promptAlpha').oninput=e=>{S.promptAlpha=+e.target.value/100;replay();};
-function setPromptAlign(a){
-  S.promptAlign=a;
-  $('#pAlignL').classList.toggle('on',a==='left');
-  $('#pAlignC').classList.toggle('on',a==='center');
-  $('#pAlignR').classList.toggle('on',a==='right');
-  replay();
+// Type popup window
+let typeWin=null;
+function openTypeWindow(){
+  if(typeWin&&!typeWin.closed){typeWin.focus();return;}
+  typeWin=window.open('','LecturePad_Type','width=480,height=400,resizable=yes');
+  if(!typeWin){alert('Pop-up blocked.');return;}
+  const d=typeWin.document;
+  d.write(`<!DOCTYPE html><html><head><title>Type Mode</title><style>
+    *{margin:0;padding:0;box-sizing:border-box}
+    body{background:#1e1e2e;color:#cdd6f4;font:12px 'IBM Plex Sans',sans-serif;padding:8px;display:flex;flex-direction:column;gap:6px}
+    .row{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+    button{background:#313244;color:#cdd6f4;border:1px solid #45475a;border-radius:4px;padding:3px 8px;cursor:pointer;font-size:11px}
+    button:hover{background:#45475a}
+    button.on{background:#89b4fa;color:#1e1e2e}
+    input[type=number],input[type=range]{background:#313244;color:#cdd6f4;border:1px solid #45475a;border-radius:3px;padding:2px 4px;font-size:11px}
+    input[type=color]{width:24px;height:24px;border:none;background:none;cursor:pointer}
+    textarea{flex:1;min-height:26px;max-height:80px;padding:2px 8px;font-size:12px;background:#313244;color:#cdd6f4;border:1px solid #45475a;border-radius:4px;font-family:inherit;outline:none;resize:vertical;line-height:1.3}
+    label{font-size:9px;color:#6c7086}
+    .sep{width:1px;height:16px;background:#45475a}
+    .rbox{display:flex;align-items:center;gap:4px;padding:2px}
+    .rbox.sel{background:#313244;border-radius:4px;border:2px solid #89b4fa}
+    .rbox input,.rbox textarea{flex:1;background:#1e1e2e;color:#cdd6f4;border:1px solid #45475a;border-radius:3px;padding:3px 6px;font-size:11px;font-family:inherit;resize:vertical;min-height:22px}
+    .rbtn{background:none;border:none;color:#6c7086;cursor:pointer;font-size:13px;padding:0 2px}
+    .rbtn:hover{color:#cdd6f4}
+    #boxes{flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:3px}
+    #status{font-size:10px;color:#6c7086}
+  </style></head><body>
+    <div class="row">
+      <button id="addBtn">+ Add</button>
+      <div class="sep"></div>
+      <label>Speed</label>
+      <input type="range" id="speed" min="1" max="20" value="5" style="width:50px">
+      <input type="number" id="speedN" value="0.5" min="0.1" max="2.0" step="0.1" style="width:42px">
+      <button id="autoBtn">▶ Auto</button>
+    </div>
+    <div id="status">Select a box, click canvas</div>
+    <div class="row">
+      <button id="promptBtn">📌 Prompt</button>
+      <button id="bakeBtn">📎 Bake</button>
+      <textarea id="pText" rows="1" placeholder="Prompt text (Shift+Enter for newline)"></textarea>
+    </div>
+    <div class="row">
+      <label>Size</label><input type="number" id="pSize" value="20" min="10" max="60" step="2" style="width:42px">
+      <label>BG</label><input type="color" id="pBg" value="#000000">
+      <label>FG</label><input type="color" id="pFg" value="#ffffff">
+      <input type="range" id="pAlpha" min="0" max="100" value="75" style="width:40px">
+      <button id="alL" class="on" style="min-width:22px">≡←</button>
+      <button id="alC" style="min-width:22px">≡</button>
+      <button id="alR" style="min-width:22px">→≡</button>
+    </div>
+    <div id="boxes"></div>
+  <script>
+    const op=window.opener;
+    function $(s){return document.querySelector(s);}
+    // Sync prompt controls from main state
+    function syncFromMain(){
+      const S=op.S;
+      $('#pText').value=S.promptText;$('#pSize').value=S.promptSize;
+      $('#pBg').value=S.promptBg;$('#pFg').value=S.promptFg;
+      $('#pAlpha').value=Math.round(S.promptAlpha*100);
+      $('#promptBtn').classList.toggle('on',S.showPrompt);
+      ['alL','alC','alR'].forEach(id=>document.getElementById(id).classList.remove('on'));
+      const am={left:'alL',center:'alC',right:'alR'};
+      if(am[S.promptAlign]) document.getElementById(am[S.promptAlign]).classList.add('on');
+      $('#speedN').value=op.REV.speed.toFixed(1);
+      $('#speed').value=Math.round(op.REV.speed*10);
+      renderBoxes();
+    }
+    function renderBoxes(){
+      const el=$('#boxes');el.innerHTML='';
+      op.REV.boxes.forEach((b,i)=>{
+        const div=document.createElement('div');div.className='rbox'+(i===op.REV.selIdx?' sel':'');
+        const inp=document.createElement('textarea');inp.rows=1;inp.value=b.text;
+        inp.addEventListener('input',()=>{b.text=inp.value;b.status='ready';op.autoSave();});
+        inp.addEventListener('mousedown',()=>{op.selectRevBox(i);op.setTool('reveal');
+          document.querySelectorAll('.rbox').forEach((el,j)=>el.classList.toggle('sel',j===i));});
+        inp.addEventListener('keydown',e=>e.stopPropagation());
+        const btnR=document.createElement('button');btnR.className='rbtn';btnR.textContent='↺';btnR.title='Reset';
+        btnR.onclick=e=>{e.stopPropagation();op.resetRevBox(i);renderBoxes();};
+        const btnX=document.createElement('button');btnX.className='rbtn';btnX.textContent='×';btnX.title='Remove';
+        btnX.onclick=e=>{e.stopPropagation();op.removeRevBox(i);renderBoxes();};
+        div.appendChild(inp);div.appendChild(btnR);div.appendChild(btnX);
+        el.appendChild(div);
+      });
+    }
+    $('#addBtn').onclick=()=>{op.addRevBox('');renderBoxes();};
+    $('#speed').oninput=e=>{op.REV.speed=+e.target.value/10;$('#speedN').value=op.REV.speed.toFixed(1);};
+    $('#speedN').oninput=e=>{op.REV.speed=Math.max(0.1,Math.min(2,+e.target.value));$('#speed').value=Math.round(op.REV.speed*10);};
+    $('#autoBtn').onclick=()=>{
+      if(op.REV.autoTimer){op.stopRevealAuto();$('#autoBtn').textContent='▶ Auto';}
+      else{op.startRevealAuto();$('#autoBtn').textContent='⏸ Stop';}
+    };
+    // Prompt
+    $('#promptBtn').onclick=()=>{op.S.showPrompt=!op.S.showPrompt;$('#promptBtn').classList.toggle('on',op.S.showPrompt);if(op.S.showPrompt){op.S.promptScreenX=null;op.S.promptScreenY=null;}op.replay();};
+    $('#bakeBtn').onclick=()=>{op.bakePrompt();};
+    $('#pText').oninput=e=>{op.S.promptText=e.target.value;op.replay();op.autoSave();};
+    $('#pText').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey)e.preventDefault();e.stopPropagation();});
+    $('#pSize').oninput=e=>{op.S.promptSize=Math.max(10,Math.min(60,+e.target.value));op.replay();};
+    $('#pBg').oninput=e=>{op.S.promptBg=e.target.value;op.replay();};
+    $('#pFg').oninput=e=>{op.S.promptFg=e.target.value;op.replay();};
+    $('#pAlpha').oninput=e=>{op.S.promptAlpha=+e.target.value/100;op.replay();};
+    function setAl(a){op.S.promptAlign=a;['alL','alC','alR'].forEach(id=>document.getElementById(id).classList.remove('on'));
+      const am={left:'alL',center:'alC',right:'alR'};if(am[a])document.getElementById(am[a]).classList.add('on');op.replay();}
+    $('#alL').onclick=()=>setAl('left');$('#alC').onclick=()=>setAl('center');$('#alR').onclick=()=>setAl('right');
+    syncFromMain();
+    // Poll for updates
+    setInterval(()=>{
+      const s=$('#status');
+      if(op.REV._statusText) s.textContent=op.REV._statusText;
+      document.querySelectorAll('.rbox').forEach((el,i)=>el.classList.toggle('sel',i===op.REV.selIdx));
+      if(op.REV._autoStopped){op.REV._autoStopped=false;$('#autoBtn').textContent='▶ Auto';}
+    },200);
+  <\/script></body></html>`);
+  d.close();
 }
-$('#pAlignL').onclick=()=>setPromptAlign('left');
-$('#pAlignC').onclick=()=>setPromptAlign('center');
-$('#pAlignR').onclick=()=>setPromptAlign('right');
-$('#btnBakePrompt').onclick=()=>{
+// Expose functions for popup
+window.replay=replay;window.autoSave=autoSave;window.pushAn=pushAn;window.setTool=setTool;
+window.addRevBox=addRevBox;window.removeRevBox=removeRevBox;window.resetRevBox=resetRevBox;window.selectRevBox=selectRevBox;
+window.stopRevealAuto=stopRevealAuto;window.startRevealAuto=startRevealAuto;
+window.bakePrompt=function(){
   if(!S.promptText||!S.promptText.trim()) return;
-  if(!S._promptBounds) drawPrompt(); // ensure bounds exist
+  if(!S._promptBounds) drawPrompt();
   const b=S._promptBounds;
-  const x=b?b.x+12:20;
-  const y=b?b.y+4:10;
+  const x=b?b.x+12:20,y=b?b.y+4:10;
   pushAn({type:'text',text:S.promptText,x:x,y:y,
     color:S.color,alpha:1.0,font:S.textFont,fontSize:S.promptSize||20,
     bold:true,italic:false,_w:0,_h:0});
   replay();
 };
+// Status text bridge
+REV._statusText='Select a box, click canvas';
 
 
 function revealStart(x,y){
-  if(REV.selIdx<0||REV.selIdx>=REV.boxes.length){$('#revStatus').textContent='Select a box first';return;}
+  if(REV.selIdx<0||REV.selIdx>=REV.boxes.length){REV._statusText='Select a box first';return;}
   const b=REV.boxes[REV.selIdx];
-  if(!b.text.trim()){$('#revStatus').textContent='Box #'+(REV.selIdx+1)+' is empty';return;}
+  if(!b.text.trim()){REV._statusText='Box #'+(REV.selIdx+1)+' is empty';return;}
   if(b.status==='done') b.status='ready'; // auto-reset for re-use
   REV.tokens=tokenize(b.text);
   REV.idx=0;REV.x=x;REV.y=y;REV.active=true;
   b.status='active';renderRevBoxes();
-  $('#revStatus').textContent='#'+(REV.selIdx+1)+' | Space = next | 0/'+REV.tokens.length;
+  REV._statusText='#'+(REV.selIdx+1)+' | Space = next | 0/'+REV.tokens.length;
   updateRevCursor();
   replay();
 }
@@ -1604,7 +1660,7 @@ function revealPrev(){
   REV.idx--;
   drawRevealedText();
   updateRevCursor();
-  $('#revStatus').textContent='#'+(REV.selIdx+1)+' | '+REV.idx+'/'+REV.tokens.length;
+  REV._statusText='#'+(REV.selIdx+1)+' | '+REV.idx+'/'+REV.tokens.length;
 }
 
 function revealNext(){
@@ -1612,7 +1668,7 @@ function revealNext(){
   REV.idx++;
   drawRevealedText();
   updateRevCursor();
-  $('#revStatus').textContent='#'+(REV.selIdx+1)+' | '+REV.idx+'/'+REV.tokens.length;
+  REV._statusText='#'+(REV.selIdx+1)+' | '+REV.idx+'/'+REV.tokens.length;
   if(REV.idx>=REV.tokens.length){
     const fullText=REV.tokens.slice(0,REV.idx).join('');
     pushAn({type:'text',text:fullText,x:REV.x,y:REV.y,
@@ -1672,21 +1728,15 @@ function hideRevCursor(){$('#revCursor').style.display='none';}
 
 function stopRevealAuto(){
   if(REV.autoTimer){clearInterval(REV.autoTimer);REV.autoTimer=null;}
-  $('#revAuto').textContent='\u25b6 Auto';$('#revAuto').classList.remove('on');
+  REV._autoStopped=true;
 }
-
-$('#revSpeed').oninput=e=>{REV.speed=+e.target.value/10;$('#revSpeedN').value=REV.speed.toFixed(1);};
-$('#revSpeedN').oninput=e=>{REV.speed=Math.max(0.1,Math.min(2,+e.target.value));$('#revSpeed').value=Math.round(REV.speed*10);};
-$('#revSpeedN').addEventListener('keydown',e=>e.stopPropagation());
-$('#revAuto').onclick=()=>{
-  if(REV.autoTimer){stopRevealAuto();return;}
-  if(!REV.active){$('#revStatus').textContent='Click on canvas first';return;}
-  $('#revAuto').textContent='\u23f8 Stop';$('#revAuto').classList.add('on');
+function startRevealAuto(){
+  if(!REV.active){REV._statusText='Click on canvas first';return;}
   REV.autoTimer=setInterval(()=>{
     if(REV.idx>=REV.tokens.length){stopRevealAuto();return;}
     revealNext();
   },REV.speed*1000);
-};
+}
 
 addRevBox('');
 
@@ -1703,7 +1753,7 @@ $('#btnPresent').onclick=()=>{
   if(!presWin){alert('Pop-up blocked. Please allow pop-ups.');return;}
   presWin.document.write(`<!DOCTYPE html><html><head><title>LecturePad</title><style>
     *{margin:0;padding:0}body{background:#000;height:100vh;overflow:hidden;cursor:none}
-    canvas{position:absolute;top:0;left:0;width:100%;height:100%}
+    canvas{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%)}
   </style></head><body><canvas id="pc"></canvas>
   <script>
     const pc=document.getElementById('pc');const px=pc.getContext('2d');
@@ -1712,22 +1762,44 @@ $('#btnPresent').onclick=()=>{
         const op=window.opener;if(!op||op.closed){close();return;}
         const src1=op.document.getElementById('pdfCanvas');
         const src2=op.document.getElementById('drawCanvas');
+        const dc=op.document.getElementById('drawCanvas');
+        if(!src1||!src2||!dc){requestAnimationFrame(sync);return;}
+        const sw=src1.width,sh=src1.height;
+        if(sw<=0||sh<=0){requestAnimationFrame(sync);return;}
+        // Get visible portion via bounding rects
         const area=op.document.querySelector('.canvas-area');
-        if(!src1||!src2||!area){requestAnimationFrame(sync);return;}
-        const visW=area.clientWidth;const visH=area.clientHeight;
-        if(visW<=0||visH<=0){requestAnimationFrame(sync);return;}
-        const zoom=op.S?op.S.zoom:1;
-        const cx=area.scrollLeft/zoom,cy=area.scrollTop/zoom;
-        const cw=Math.min(visW/zoom,src1.width-cx),ch=Math.min(visH/zoom,src1.height-cy);
+        if(!area){requestAnimationFrame(sync);return;}
+        const aR=area.getBoundingClientRect();
+        const dR=dc.getBoundingClientRect();
+        const vL=Math.max(aR.left,dR.left)-dR.left;
+        const vT=Math.max(aR.top,dR.top)-dR.top;
+        const vR=Math.min(aR.right,dR.right)-dR.left;
+        const vB=Math.min(aR.bottom,dR.bottom)-dR.top;
+        const vW=vR-vL,vH=vB-vT;
+        if(vW<=0||vH<=0){requestAnimationFrame(sync);return;}
+        const sx=sw/dR.width,sy=sh/dR.height;
+        const cx=vL*sx,cy=vT*sy,cw=vW*sx,ch=vH*sy;
         const dpr=window.devicePixelRatio||1;
-        const pw=window.innerWidth*dpr,ph=window.innerHeight*dpr;
+        const ww=window.innerWidth*dpr,wh=window.innerHeight*dpr;
+        const fitScale=Math.min(ww/cw,wh/ch);
+        const pw=Math.round(cw*fitScale),ph=Math.round(ch*fitScale);
         if(pc.width!==pw||pc.height!==ph){pc.width=pw;pc.height=ph;}
         px.clearRect(0,0,pw,ph);
-        const scale=Math.min(pw/cw,ph/ch);
-        const dw=cw*scale,dh=ch*scale;
-        const dx=(pw-dw)/2,dy=(ph-dh)/2;
-        px.drawImage(src1,cx,cy,cw,ch,dx,dy,dw,dh);
-        px.drawImage(src2,cx,cy,cw,ch,dx,dy,dw,dh);
+        px.drawImage(src1,cx,cy,cw,ch,0,0,pw,ph);
+        px.drawImage(src2,cx,cy,cw,ch,0,0,pw,ph);
+        // Draw cursor
+        const S=op.S;
+        if(S&&S.cursorX>=0&&S.cursorY>=0){
+          const scx=(S.cursorX-cx)/cw*pw,scy=(S.cursorY-cy)/ch*ph;
+          if(scx>=0&&scx<=pw&&scy>=0&&scy<=ph){
+            px.save();px.strokeStyle='#3b9eff';px.lineWidth=2;px.globalAlpha=0.7;
+            const r=10;
+            px.beginPath();px.moveTo(scx-r,scy);px.lineTo(scx+r,scy);px.stroke();
+            px.beginPath();px.moveTo(scx,scy-r);px.lineTo(scx,scy+r);px.stroke();
+            px.beginPath();px.arc(scx,scy,r,0,Math.PI*2);px.stroke();
+            px.restore();
+          }
+        }
       }catch(e){}
       requestAnimationFrame(sync);
     }
@@ -1737,7 +1809,7 @@ $('#btnPresent').onclick=()=>{
   presWin.document.close();
 };
 // Clean up on main window close
-window.addEventListener('beforeunload',()=>{if(presWin&&!presWin.closed)presWin.close();});
+window.addEventListener('beforeunload',()=>{if(presWin&&!presWin.closed)presWin.close();if(typeWin&&!typeWin.closed)typeWin.close();});
 
 /* ── Keys ── */
 document.addEventListener('keydown',e=>{
