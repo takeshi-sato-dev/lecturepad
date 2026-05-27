@@ -217,7 +217,9 @@ const BOARD_SIZES={'4:3':[1280,960],'16:9':[1280,720],'A4':[794,1123],'A4L':[112
 let tabs=[],activeTab=null,tabId=0;
 function newTab(type,name,pdf,pdfData){
   const t={id:++tabId,type,name,pdf:pdf||null,pdfData:pdfData||null,
-    annotations:{},undoStack:{},redoStack:{},currentPage:1,totalPages:type==='whiteboard'?1:0};
+    annotations:{},undoStack:{},redoStack:{},currentPage:1,totalPages:type==='whiteboard'?1:0,
+    typeBoxes:[{text:'',status:'ready'}],
+    prompt:{text:'',size:20,bg:'#000000',fg:'#ffffff',alpha:0.75,align:'left',show:false,lh:1.3}};
   if(pdf) t.totalPages=pdf.numPages;
   tabs.push(t);renderTabs();switchTab(t.id);autoSave();return t;
 }
@@ -226,10 +228,39 @@ function switchTab(id){
   activeTab=id;const t=tabs.find(x=>x.id===id);if(!t)return;
   S.annotations=t.annotations;S.undoStack=t.undoStack;S.redoStack=t.redoStack;S.currentPage=t.currentPage;S.totalPages=t.totalPages;
   S.pdf=t.pdf;S.pdfData=t.pdfData;S.workspace=t.type;S.laserStrokes=[];S.editIdx=-1;hideTO();
+  // Restore Type boxes for this tab
+  REV.boxes=[];REV.selIdx=-1;REV.active=false;REV.autoTimer=null;
+  if(t.typeBoxes&&t.typeBoxes.length){
+    t.typeBoxes.forEach(b=>REV.boxes.push({text:b.text||'',status:b.status||'ready'}));
+  } else {
+    REV.boxes.push({text:'',status:'ready'});
+  }
+  REV._statusText='Select a box, click canvas';
+  renderRevBoxes();
+  // Restore Prompt for this tab
+  if(t.prompt){
+    S.promptText=t.prompt.text||'';S.promptSize=t.prompt.size||20;
+    S.promptBg=t.prompt.bg||'#000000';S.promptFg=t.prompt.fg||'#ffffff';
+    S.promptAlpha=t.prompt.alpha!==undefined?t.prompt.alpha:0.75;
+    S.promptAlign=t.prompt.align||'left';S.showPrompt=!!t.prompt.show;S.promptLH=t.prompt.lh||1.3;
+  } else {
+    S.promptText='';S.promptSize=20;S.promptBg='#000000';S.promptFg='#ffffff';
+    S.promptAlpha=0.75;S.promptAlign='left';S.showPrompt=false;S.promptLH=1.3;
+  }
+  S.promptScreenX=null;S.promptScreenY=null;
+  // Sync Type popup if open
+  if(typeWin&&!typeWin.closed&&typeWin.syncFromMain) typeWin.syncFromMain();
   renderTabs();$('#welcome').style.display='none';$('#canvasWrap').style.display='block';$('#pbar').style.display='flex';
   renderPage();
 }
-function saveToTab(id){const t=tabs.find(x=>x.id===id);if(!t)return;t.annotations=S.annotations;t.undoStack=S.undoStack;t.redoStack=S.redoStack;t.currentPage=S.currentPage;t.totalPages=S.totalPages;}
+function saveToTab(id){
+  const t=tabs.find(x=>x.id===id);if(!t)return;
+  t.annotations=S.annotations;t.undoStack=S.undoStack;t.redoStack=S.redoStack;
+  t.currentPage=S.currentPage;t.totalPages=S.totalPages;
+  // Save Type boxes and Prompt per tab
+  t.typeBoxes=REV.boxes.map(b=>({text:b.text,status:'ready'}));
+  t.prompt={text:S.promptText,size:S.promptSize,bg:S.promptBg,fg:S.promptFg,alpha:S.promptAlpha,align:S.promptAlign,show:S.showPrompt,lh:S.promptLH};
+}
 function closeTab(id){
   tabs=tabs.filter(x=>x.id!==id);
   if(tabs.length===0){
@@ -242,14 +273,47 @@ function closeTab(id){
 }
 function renderTabs(){
   const bar=$('#tabBar');bar.querySelectorAll('.tab').forEach(e=>e.remove());const btn=$('#tabAddWB');
-  tabs.forEach(t=>{
+  tabs.forEach((t,ti)=>{
     const el=document.createElement('button');el.className='tab'+(t.id===activeTab?' active':'');
-    el.innerHTML=`${t.type==='pdf'?'📄':'◻'} ${t.name} <span class="pop" title="Pop out to window">⧉</span> <span class="x">×</span>`;
+    el.draggable=true;el.dataset.idx=ti;
+    const nameSpan=document.createElement('span');nameSpan.className='tname';nameSpan.textContent=(t.type==='pdf'?'📄 ':'◻ ')+t.name;
+    el.appendChild(nameSpan);
+    el.insertAdjacentHTML('beforeend',' <span class="pop" title="Pop out to window">⧉</span> <span class="x">×</span>');
+    let clickTimer=null;
     el.onclick=e=>{
-      if(e.target.classList.contains('x')){closeTab(t.id);e.stopPropagation();}
-      else if(e.target.classList.contains('pop')){popOutTab(t.id);e.stopPropagation();}
-      else switchTab(t.id);
+      if(e.target.classList.contains('x')){closeTab(t.id);e.stopPropagation();return;}
+      if(e.target.classList.contains('pop')){popOutTab(t.id);e.stopPropagation();return;}
+      if(clickTimer){clearTimeout(clickTimer);clickTimer=null;return;}
+      clickTimer=setTimeout(()=>{clickTimer=null;switchTab(t.id);},250);
     };
+    nameSpan.addEventListener('dblclick',e=>{
+      e.stopPropagation();
+      if(clickTimer){clearTimeout(clickTimer);clickTimer=null;}
+      if(t.id!==activeTab) switchTab(t.id);
+      const inp=document.createElement('input');inp.type='text';inp.value=t.name;
+      inp.style.cssText='width:80px;height:18px;font-size:11px;background:#1e1e2e;color:#cdd6f4;border:1px solid #89b4fa;border-radius:3px;padding:0 4px;outline:none';
+      nameSpan.textContent='';nameSpan.appendChild(inp);inp.focus();inp.select();
+      const finish=()=>{
+        const v=inp.value.trim();if(v) t.name=v;
+        renderTabs();autoSave();
+      };
+      inp.addEventListener('keydown',ev=>{if(ev.key==='Enter'){ev.preventDefault();finish();}if(ev.key==='Escape'){renderTabs();}ev.stopPropagation();});
+      inp.addEventListener('blur',finish);
+    });
+    // Drag reorder
+    el.addEventListener('dragstart',e=>{e.dataTransfer.setData('text/plain',ti);el.style.opacity='0.4';});
+    el.addEventListener('dragend',()=>{el.style.opacity='1';});
+    el.addEventListener('dragover',e=>{e.preventDefault();el.style.borderLeft='2px solid #89b4fa';});
+    el.addEventListener('dragleave',()=>{el.style.borderLeft='';});
+    el.addEventListener('drop',e=>{
+      e.preventDefault();el.style.borderLeft='';
+      const from=+e.dataTransfer.getData('text/plain');
+      const to=ti;
+      if(from===to) return;
+      const item=tabs.splice(from,1)[0];
+      tabs.splice(to,0,item);
+      renderTabs();autoSave();
+    });
     bar.insertBefore(el,btn);
   });
 }
@@ -280,8 +344,7 @@ async function popOutTab(id){
       } else {
         w.postMessage({action:'loadTab',state,pdfBase64:null},'*');
       }
-      // Remove from this window
-      closeTab(id);
+      // Keep original tab — pop-out is a copy
     }catch(e){console.error(e);}
   };
   setTimeout(transfer,1500); // wait for scripts to load
@@ -315,7 +378,13 @@ $('#tabNewWin').onclick=()=>{
 setTimeout(()=>{if(window._isIOSApp){$('#tabNewWin').style.display='none';}},500);
 $('#tabReset').onclick=()=>{
   if(!confirm('Clear all saved data and reload?')) return;
-  asClear().then(()=>location.reload()).catch(()=>location.reload());
+  if(typeWin&&!typeWin.closed) typeWin.close();
+  if(presWin&&!presWin.closed) presWin.close();
+  const req=indexedDB.deleteDatabase(AS_DB);
+  req.onsuccess=()=>location.reload();
+  req.onerror=()=>location.reload();
+  req.onblocked=()=>location.reload();
+  setTimeout(()=>location.reload(),1000); // fallback
 };
 $('#tabAddWB').onclick=()=>{const n=tabs.filter(t=>t.type==='whiteboard').length+1;newTab('whiteboard','Board '+n);};
 $('#wBlank').onclick=()=>newTab('whiteboard','Board 1');
@@ -328,23 +397,45 @@ document.ondrop=async e=>{e.preventDefault();const f=e.dataTransfer.files[0];if(
 /* ── State ── */
 const S={pdf:null,pdfData:null,currentPage:1,totalPages:0,scale:1.5,zoom:1.0,workspace:'none',tool:'select',color:'#e05555',
   lineWidth:3,alpha:1.0,fadeTime:2.0,textFont:"'IBM Plex Sans',sans-serif",textSize:24,textBold:false,textItalic:false,
+  penColor:'#e05555',textColor:'#1a1a1a',typeColor:'#1a1a1a',pointerColor:'#e05555',
   drawing:false,lastX:0,lastY:0,annotations:{},undoStack:{},redoStack:{},laserStrokes:[],animating:false,editIdx:-1,textAlign:'justify',textLH:1.25,
-  showGrid:false,selectSet:new Set(),showPrompt:false,promptText:'',promptSize:20,promptBg:'#000000',promptFg:'#ffffff',promptAlpha:0.75,promptScreenX:null,promptScreenY:null,promptAlign:'left',
+  showGrid:false,selectSet:new Set(),showPrompt:false,promptText:'',promptSize:20,promptBg:'#000000',promptFg:'#ffffff',promptAlpha:0.75,promptScreenX:null,promptScreenY:null,promptAlign:'left',promptLH:1.3,
   scaleSnap:null,cursorX:-1,cursorY:-1,clipboard:[],imgCache:{}}; // snapshot of selected items for scaling
 window.S=S; // expose for Present window and Type popup
 window.REV=null; // will be set after REV is defined
 
 /* ── Colors ── */
+const SHAPES=['line','arrow','circle','ellipse','rect','rrect'];
+function toolColorKey(t){
+  if(t==='pen'||SHAPES.includes(t)) return 'penColor';
+  if(t==='text') return 'textColor';
+  if(t==='reveal') return 'typeColor';
+  if(t==='laser') return 'pointerColor';
+  return null;
+}
+function syncPalette(){
+  $$('.cs').forEach(s=>s.classList.toggle('on',s.dataset.color===S.color));
+}
 ['#e05555','#ff8c42','#f5d642','#50c878','#3b9eff','#7c5cbf','#1a1a1a','#888888','#bbbbbb','#ffffff'].forEach(c=>{
   const el=document.createElement('div');el.className='cs'+(c===S.color?' on':'');el.style.background=c;el.dataset.color=c;
   if(c==='#ffffff') el.style.border='2px solid #555';
-  el.onclick=()=>{$$('.cs').forEach(s=>s.classList.remove('on'));el.classList.add('on');S.color=c;applyFontToSelected();if(S.editIdx>=0) ta.style.color=c;};
+  el.onclick=()=>{
+    $$('.cs').forEach(s=>s.classList.remove('on'));el.classList.add('on');
+    S.color=c;
+    const key=toolColorKey(S.tool);if(key) S[key]=c;
+    applyFontToSelected();if(S.editIdx>=0) ta.style.color=c;
+  };
   $('#colorRow').appendChild(el);
 });
 
 /* ── Tools ── */
-const SHAPES=['line','arrow','circle','ellipse','rect','rrect'];
-function setTool(t){S.tool=t;hideTO();
+function setTool(t){
+  // Save outgoing tool's color
+  const oldKey=toolColorKey(S.tool);if(oldKey) S[oldKey]=S.color;
+  S.tool=t;hideTO();
+  // Restore incoming tool's color
+  const newKey=toolColorKey(t);if(newKey) S.color=S[newKey];
+  syncPalette();
   // Don't destroy reveal state - just stop auto timer. User can resume by switching back to reveal.
   if(t!=='reveal') stopRevealAuto();
   if(t!=='select'){selectHover=-1;S.selectSet.clear();S.scaleSnap=null;$('#scaleG').style.display='none';$('#btnLock').style.display='none';}
@@ -608,7 +699,7 @@ function replay(){
     dX.font=(S.textItalic?'italic ':'')+(S.textBold?'bold ':'')+S.textSize+'px '+S.textFont;
     const maxW=dC.width-REV.x-10;
     const lines=wrapText(dX,partial,maxW>50?maxW:dC.width);
-    const lh=S.textSize*1.25;
+    const lh=S.textSize*(S.textLH||1.25);
     lines.forEach((l,i)=>dX.fillText(l,REV.x,REV.y+(i+1)*lh));
     dX.restore();
   }
@@ -640,7 +731,7 @@ function drawPrompt(){
   dX.font='bold '+sz+'px '+S.textFont;
   const maxW=viewW-pad*2-margin*2;
   const lines=wrapText(dX,text,maxW>10?maxW:viewW);
-  const lh=sz*1.3;
+  const lh=sz*(S.promptLH||1.3);
   const tw=Math.min(Math.max(...lines.map(l=>dX.measureText(l).width)),maxW);
   const bw=tw+pad*2;
   const bh=lh*lines.length+pad*2;
@@ -897,7 +988,7 @@ dC.addEventListener('mousedown',e=>{
       const lines=wrapText(dX,partial,maxW>50?maxW:dC.width);
       const tw=Math.max(...lines.map(l=>dX.measureText(l).width));
       dX.restore();
-      const lh=S.textSize*1.25;
+      const lh=S.textSize*(S.textLH||1.25);
       if(pos.x>=REV.x-pad&&pos.x<=REV.x+tw+pad&&pos.y>=REV.y-pad&&pos.y<=REV.y+lines.length*lh+pad){
         S._revDrag={offX:pos.x-REV.x,offY:pos.y-REV.y};
         S.drawing=true;
@@ -950,6 +1041,23 @@ dC.addEventListener('mousedown',e=>{
   }
   if(S.tool==='reveal'){
     const pos=gP(e);
+    // If there's active revealed text, check if clicking on it to drag
+    if(REV.active&&REV.idx>0){
+      const pad=15;
+      dX.save();
+      dX.font=(S.textItalic?'italic ':'')+(S.textBold?'bold ':'')+S.textSize+'px '+S.textFont;
+      const partial=REV.tokens.slice(0,REV.idx).join('');
+      const maxW=dC.width-REV.x-10;
+      const lines=wrapText(dX,partial,maxW>50?maxW:dC.width);
+      const tw=Math.max(...lines.map(l=>dX.measureText(l).width));
+      dX.restore();
+      const lh=S.textSize*(S.textLH||1.25);
+      if(pos.x>=REV.x-pad&&pos.x<=REV.x+tw+pad&&pos.y>=REV.y-pad&&pos.y<=REV.y+lines.length*lh+pad){
+        S._revDrag={offX:pos.x-REV.x,offY:pos.y-REV.y};
+        S.drawing=true;
+        return;
+      }
+    }
     revealStart(pos.x,pos.y);
     return;
   }
@@ -1106,7 +1214,7 @@ function animLA(){
     dX.font=(S.textItalic?'italic ':'')+(S.textBold?'bold ':'')+S.textSize+'px '+S.textFont;
     const maxW=dC.width-REV.x-10;
     const lines=wrapText(dX,partial,maxW>50?maxW:dC.width);
-    const lh=S.textSize*1.25;
+    const lh=S.textSize*(S.textLH||1.25);
     lines.forEach((l,i)=>dX.fillText(l,REV.x,REV.y+(i+1)*lh));
     dX.restore();
   }
@@ -1167,7 +1275,7 @@ function commitText(){
   const text=ta.value.trim();if(!text){S.editIdx=-1;hideTO();replay();return;}
   const r=dC.getBoundingClientRect(),scX=dC.width/r.width,scY=dC.height/r.height;
   const cx=tov._cx!==null?tov._cx:tov._sx*scX,cy=tov._cy!==null?tov._cy:tov._sy*scY;
-  const lines=text.split('\n'),lh=S.textSize*1.25;
+  const lines=text.split('\n'),lh=S.textSize*(S.textLH||1.25);
   dX.font=(S.textItalic?'italic ':'')+(S.textBold?'bold ':'')+S.textSize+'px '+S.textFont;
   const mw=Math.max(...lines.map(l=>dX.measureText(l).width));
   const an={type:'text',text,x:cx,y:cy,color:S.color,alpha:S.alpha,font:S.textFont,fontSize:S.textSize,bold:S.textBold,italic:S.textItalic,align:S.textAlign,lh:S.textLH,_w:mw,_h:lines.length*lh};
@@ -1234,13 +1342,11 @@ $('#btnSaveSession').onclick=()=>{
     const tabData=tabs.map(t=>({
       type:t.type,name:t.name,annotations:t.annotations,
       currentPage:t.currentPage,totalPages:t.totalPages,
+      typeBoxes:t.typeBoxes||[],
+      prompt:t.prompt||{},
       pdfBase64:t.pdfData&&t.pdfData.byteLength>0?arrayBufToBase64(t.pdfData.slice(0)):null
     }));
-    const session={
-      tabs:tabData,
-      typeBoxes:REV.boxes.map(b=>({text:b.text,status:'ready'})),
-      prompt:{text:S.promptText,size:S.promptSize,bg:S.promptBg,fg:S.promptFg,alpha:S.promptAlpha,align:S.promptAlign}
-    };
+    const session={tabs:tabData};
     const json=JSON.stringify(session);
     if(window._isIOSApp){
       const b64=btoa(unescape(encodeURIComponent(json)));
@@ -1266,10 +1372,8 @@ sessionInput.onchange=async e=>{
   try{
     const text=await f.text();
     const raw=JSON.parse(text);
-    // Handle both old format (array) and new format (object with tabs/typeBoxes/prompt)
     const data=Array.isArray(raw)?raw:raw.tabs;
     if(!Array.isArray(data)||!data.length){alert('Invalid session file');return;}
-    // Close all current tabs
     tabs=[];activeTab=null;tabId=0;
     for(const d of data){
       let pdf=null,pdfData=null;
@@ -1279,26 +1383,20 @@ sessionInput.onchange=async e=>{
       }
       const t={id:++tabId,type:d.type||'whiteboard',name:d.hasPdf&&!pdf?d.name+' ⚠':d.name||'Tab',
         pdf,pdfData,annotations:d.annotations||{},undoStack:{},redoStack:{},
-        currentPage:d.currentPage||1,totalPages:d.totalPages||1};
+        currentPage:d.currentPage||1,totalPages:d.totalPages||1,
+        typeBoxes:d.typeBoxes||[{text:'',status:'ready'}],
+        prompt:d.prompt||{text:'',size:20,bg:'#000000',fg:'#ffffff',alpha:0.75,align:'left',show:false}};
       tabs.push(t);
+    }
+    // Backward compat: old format had global typeBoxes/prompt — apply to first tab
+    if(!Array.isArray(raw)&&raw.typeBoxes&&!data[0].typeBoxes){
+      tabs[0].typeBoxes=raw.typeBoxes;
+    }
+    if(!Array.isArray(raw)&&raw.prompt&&!data[0].prompt.text){
+      tabs[0].prompt=raw.prompt;
     }
     renderTabs();
     if(tabs.length)switchTab(tabs[0].id);
-    // Restore Type boxes
-    if(raw.typeBoxes&&Array.isArray(raw.typeBoxes)){
-      REV.boxes=[];REV.selIdx=-1;REV.active=false;
-      raw.typeBoxes.forEach(b=>addRevBox(b.text||''));
-    }
-    // Restore Prompt
-    if(raw.prompt){
-      const p=raw.prompt;
-      S.promptText=p.text||'';
-      S.promptSize=p.size||20;
-      S.promptBg=p.bg||'#000000';
-      S.promptFg=p.fg||'#ffffff';
-      S.promptAlpha=p.alpha!==undefined?p.alpha:0.75;
-      S.promptAlign=p.align||'left';
-    }
   }catch(err){alert('Failed to load session: '+err.message);}
   e.target.value='';
 };
@@ -1318,18 +1416,16 @@ function autoSave(){
       if(activeTab) saveToTab(activeTab);
       const snap=tabs.map(t=>({
         id:t.id,type:t.type,name:t.name,
-        annotations:t.annotations, // no undo/redo — small
+        annotations:t.annotations,
         currentPage:t.currentPage,totalPages:t.totalPages,
-        hasPdf:!!t.pdfData
+        hasPdf:!!t.pdfData,
+        typeBoxes:t.typeBoxes||[],
+        prompt:t.prompt||{}
       }));
       await asSet('tabs',snap);
       await asSet('active',activeTab);
       await asSet('tabId',tabId);
-      // PDFs stored separately by id (skip detached buffers)
       for(const t of tabs){if(t.pdfData&&t.pdfData.byteLength>0) await asSet('pdf_'+t.id,t.pdfData.slice(0));}
-      // Save Type boxes and Prompt
-      await asSet('typeBoxes',REV.boxes.map(b=>({text:b.text,status:'ready'})));
-      await asSet('prompt',{text:S.promptText,size:S.promptSize,bg:S.promptBg,fg:S.promptFg,alpha:S.promptAlpha,align:S.promptAlign});
     }catch(e){/* best-effort */}
   },1000);
 }
@@ -1350,7 +1446,9 @@ async function autoRestore(){
       }
       tmp.push({id:d.id||0,type:d.type,name:d.hasPdf&&!pdf?d.name+' ⚠':d.name,
         pdf,pdfData,annotations:d.annotations||{},undoStack:{},redoStack:{},
-        currentPage:d.currentPage||1,totalPages:d.totalPages||1});
+        currentPage:d.currentPage||1,totalPages:d.totalPages||1,
+        typeBoxes:d.typeBoxes||[{text:'',status:'ready'}],
+        prompt:d.prompt||{text:'',size:20,bg:'#000000',fg:'#ffffff',alpha:0.75,align:'left',show:false}});
     }
     if(!tmp.length) return false;
     tabs=tmp;
@@ -1358,22 +1456,6 @@ async function autoRestore(){
     renderTabs();
     const sa=(await asGet('active'))||tabs[0].id;
     switchTab(tabs.find(x=>x.id===sa)?sa:tabs[0].id);
-    // Restore Type boxes
-    const savedBoxes=await asGet('typeBoxes');
-    if(savedBoxes&&Array.isArray(savedBoxes)){
-      REV.boxes=[];REV.selIdx=-1;REV.active=false;
-      savedBoxes.forEach(b=>addRevBox(b.text||''));
-    }
-    // Restore Prompt
-    const savedPrompt=await asGet('prompt');
-    if(savedPrompt){
-      S.promptText=savedPrompt.text||'';
-      S.promptSize=savedPrompt.size||20;
-      S.promptBg=savedPrompt.bg||'#000000';
-      S.promptFg=savedPrompt.fg||'#ffffff';
-      S.promptAlpha=savedPrompt.alpha!==undefined?savedPrompt.alpha:0.75;
-      S.promptAlign=savedPrompt.align||'left';
-    }
     return true;
   }catch(e){
     console.warn('Auto-restore failed:',e);
@@ -1552,6 +1634,7 @@ function openTypeWindow(){
     </div>
     <div class="row">
       <label>Size</label><input type="number" id="pSize" value="20" min="10" max="60" step="2" style="width:42px">
+      <label>LH</label><input type="number" id="pLH" value="1.3" min="0.8" max="3.0" step="0.05" style="width:42px">
       <label>BG</label><input type="color" id="pBg" value="#000000">
       <label>FG</label><input type="color" id="pFg" value="#ffffff">
       <input type="range" id="pAlpha" min="0" max="100" value="75" style="width:40px">
@@ -1566,7 +1649,7 @@ function openTypeWindow(){
     // Sync prompt controls from main state
     function syncFromMain(){
       const S=op.S;
-      $('#pText').value=S.promptText;$('#pSize').value=S.promptSize;
+      $('#pText').value=S.promptText;$('#pSize').value=S.promptSize;$('#pLH').value=S.promptLH||1.3;
       $('#pBg').value=S.promptBg;$('#pFg').value=S.promptFg;
       $('#pAlpha').value=Math.round(S.promptAlpha*100);
       $('#promptBtn').classList.toggle('on',S.showPrompt);
@@ -1607,6 +1690,7 @@ function openTypeWindow(){
     $('#pText').oninput=e=>{op.S.promptText=e.target.value;op.replay();op.autoSave();};
     $('#pText').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey)e.preventDefault();e.stopPropagation();});
     $('#pSize').oninput=e=>{op.S.promptSize=Math.max(10,Math.min(60,+e.target.value));op.replay();};
+    $('#pLH').oninput=e=>{op.S.promptLH=Math.max(0.8,Math.min(3,+e.target.value));op.replay();};
     $('#pBg').oninput=e=>{op.S.promptBg=e.target.value;op.replay();};
     $('#pFg').oninput=e=>{op.S.promptFg=e.target.value;op.replay();};
     $('#pAlpha').oninput=e=>{op.S.promptAlpha=+e.target.value/100;op.replay();};
@@ -1697,7 +1781,7 @@ function drawRevealedText(){
   dX.font=(S.textItalic?'italic ':'')+(S.textBold?'bold ':'')+S.textSize+'px '+S.textFont;
   const maxW=dC.width-REV.x-10;
   const lines=wrapText(dX,partial,maxW>50?maxW:dC.width);
-  const lh=S.textSize*1.25;
+  const lh=S.textSize*(S.textLH||1.25);
   lines.forEach((l,i)=>dX.fillText(l,REV.x,REV.y+(i+1)*lh));
   dX.restore();
 }
@@ -1715,7 +1799,7 @@ function updateRevCursor(){
   const lastLine=lines[lines.length-1]||'';
   const tw=dX.measureText(lastLine).width;
   dX.restore();
-  const lh=S.textSize*1.25;
+  const lh=S.textSize*(S.textLH||1.25);
   const cx=(REV.x+tw)*scX;
   const cy=(REV.y+(lines.length)*lh-S.textSize*0.8)*scY;
   rc.style.display='block';
