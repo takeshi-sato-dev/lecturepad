@@ -60,8 +60,8 @@
   .wbtn:hover{opacity:.85}
 
   .tov{position:absolute;z-index:200;display:none}
-  .tov textarea{min-width:220px;min-height:36px;padding:6px 8px;font-size:20px;border:2px solid var(--ac);background:#fff;color:#111;outline:none;resize:both;overflow:auto;caret-color:#111;border-radius:4px;box-shadow:0 2px 16px rgba(0,0,0,.3);line-height:1.3}
-  .tov textarea::-webkit-resizer{background:var(--ac);border-radius:2px}
+  .tov .ta-ce{min-width:220px;min-height:36px;padding:6px 8px;font-size:20px;border:2px solid var(--ac);background:#fff;color:#111;outline:none;resize:both;overflow:auto;caret-color:#111;border-radius:4px;box-shadow:0 2px 16px rgba(0,0,0,.3);line-height:1.3;white-space:pre-wrap;word-break:break-word}
+  .tov .ta-ce::-webkit-resizer{background:var(--ac);border-radius:2px}
 
   #fileInput{display:none}
   .zi{font-size:10px;color:var(--txd);min-width:30px;text-align:center}
@@ -190,7 +190,7 @@
   <div class="canvas-wrap" id="canvasWrap" style="display:none">
     <canvas id="pdfCanvas"></canvas>
     <canvas id="drawCanvas"></canvas>
-    <div class="tov" id="tov"><textarea id="ta" rows="1" placeholder="Type here"></textarea></div>
+    <div class="tov" id="tov"><div id="ta" class="ta-ce" contenteditable="true"></div></div>
     <div id="revCursor" style="position:absolute;pointer-events:none;z-index:160;display:none">
       <div style="width:2px;height:28px;background:var(--ac);animation:blink 1s step-end infinite"></div>
     </div>
@@ -419,11 +419,19 @@ function syncPalette(){
 ['#e05555','#ff8c42','#f5d642','#50c878','#3b9eff','#7c5cbf','#1a1a1a','#888888','#bbbbbb','#ffffff'].forEach(c=>{
   const el=document.createElement('div');el.className='cs'+(c===S.color?' on':'');el.style.background=c;el.dataset.color=c;
   if(c==='#ffffff') el.style.border='2px solid #555';
+  // Prevent mousedown from stealing focus/selection from contentEditable
+  el.addEventListener('mousedown',e=>{ if(tov.style.display==='block') e.preventDefault(); });
   el.onclick=()=>{
     $$('.cs').forEach(s=>s.classList.remove('on'));el.classList.add('on');
     S.color=c;
     const key=toolColorKey(S.tool);if(key) S[key]=c;
-    applyFontToSelected();if(S.editIdx>=0) ta.style.color=c;
+    // If editing text in contentEditable, apply color to selection
+    if(tov.style.display==='block'&&S.tool==='text'){
+      restoreSelection();
+      applyRichFormat('foreColor',c);
+    }else{
+      applyFontToSelected();
+    }
   };
   $('#colorRow').appendChild(el);
 });
@@ -472,9 +480,11 @@ function updateSelectTextBar(){
     for(const idx of S.selectSet){
       const a=an[idx];
       if(a&&a.type==='text'){
+        ensureRuns(a);
+        const r0=a.runs[0]||{bold:false,italic:false,color:'#1a1a1a'};
         $('#fSel').value=a.font;$('#fSize').value=a.fontSize;
-        $('#btnB').classList.toggle('on',!!a.bold);$('#btnI').classList.toggle('on',!!a.italic);
-        S.textFont=a.font;S.textSize=a.fontSize;S.textBold=!!a.bold;S.textItalic=!!a.italic;
+        $('#btnB').classList.toggle('on',!!r0.bold);$('#btnI').classList.toggle('on',!!r0.italic);
+        S.textFont=a.font;S.textSize=a.fontSize;S.textBold=!!r0.bold;S.textItalic=!!r0.italic;
         S.textLH=a.lh||1.25;$('#fLH').value=S.textLH;
         S.textAlign=a.align||'justify';
         ['btnTAL','btnTAC','btnTAR','btnTAJ'].forEach(id=>$('#'+id).classList.remove('on'));
@@ -506,7 +516,10 @@ function applyFontToSelected(){
   S.selectSet.forEach(idx=>{
     const a=an[idx];if(!a)return;
     if(a.type==='text'){
-      a.font=S.textFont;a.fontSize=S.textSize;a.bold=S.textBold;a.italic=S.textItalic;a.color=S.color;a.align=S.textAlign;
+      ensureRuns(a);
+      a.font=S.textFont;a.fontSize=S.textSize;a.align=S.textAlign;
+      // Apply bold/italic/color to all runs
+      a.runs.forEach(r=>{r.bold=S.textBold;r.italic=S.textItalic;r.color=S.color;});
       a._w=0;a._h=0;changed=true;
     }
     if(a.type==='stroke'||a.type==='shape'){
@@ -605,8 +618,24 @@ function applyLHToSelected(){
   S.selectSet.forEach(idx=>{const a=an[idx];if(a&&a.type==='text'){a.lh=S.textLH;changed=true;}});
   if(changed){replay();autoSave();}
 }
-$('#btnB').onclick=()=>{S.textBold=!S.textBold;$('#btnB').classList.toggle('on',S.textBold);updTA();applyFontToSelected();};
-$('#btnI').onclick=()=>{S.textItalic=!S.textItalic;$('#btnI').classList.toggle('on',S.textItalic);updTA();applyFontToSelected();};
+$('#btnB').addEventListener('mousedown',e=>{ if(tov.style.display==='block') e.preventDefault(); });
+$('#btnB').onclick=()=>{
+  if(tov.style.display==='block'&&S.tool==='text'){
+    restoreSelection();
+    applyRichFormat('bold');
+  }else{
+    S.textBold=!S.textBold;$('#btnB').classList.toggle('on',S.textBold);updTA();applyFontToSelected();
+  }
+};
+$('#btnI').addEventListener('mousedown',e=>{ if(tov.style.display==='block') e.preventDefault(); });
+$('#btnI').onclick=()=>{
+  if(tov.style.display==='block'&&S.tool==='text'){
+    restoreSelection();
+    applyRichFormat('italic');
+  }else{
+    S.textItalic=!S.textItalic;$('#btnI').classList.toggle('on',S.textItalic);updTA();applyFontToSelected();
+  }
+};
 function setTextAlign(a){
   S.textAlign=a;
   ['btnTAL','btnTAC','btnTAR','btnTAJ'].forEach(id=>$('#'+id).classList.remove('on'));
@@ -624,6 +653,240 @@ $('#btnTAC').onclick=()=>setTextAlign('center');
 $('#btnTAR').onclick=()=>setTextAlign('right');
 $('#btnTAJ').onclick=()=>setTextAlign('justify');
 function updTA(){const t=$('#ta');t.style.fontFamily=S.textFont;t.style.fontSize=S.textSize+'px';t.style.fontWeight=S.textBold?'bold':'normal';t.style.fontStyle=S.textItalic?'italic':'normal';}
+
+/* ── Rich Text Helpers ── */
+// Save/restore selection for contentEditable
+let _savedRange=null;
+function saveSelection(){
+  const sel=window.getSelection();
+  if(sel.rangeCount>0&&ta.contains(sel.anchorNode)){
+    _savedRange=sel.getRangeAt(0).cloneRange();
+  }
+}
+function restoreSelection(){
+  if(_savedRange){
+    const sel=window.getSelection();
+    sel.removeAllRanges();sel.addRange(_savedRange);
+  }
+}
+// Track selection changes while editing
+document.addEventListener('selectionchange',()=>{
+  if(tov.style.display!=='block') return;
+  const sel=window.getSelection();
+  if(sel.rangeCount>0&&ta.contains(sel.anchorNode)){
+    _savedRange=sel.getRangeAt(0).cloneRange();
+  }
+});
+// Ensure annotation has runs array (backward compat)
+function ensureRuns(a){
+  if(a.runs) return;
+  a.runs=[{text:a.text||'',color:a.color||'#1a1a1a',bold:!!a.bold,italic:!!a.italic}];
+  delete a.text;delete a.color;delete a.bold;delete a.italic;
+}
+// Get plain text from runs
+function runsToText(runs){return runs.map(r=>r.text).join('');}
+// Populate contentEditable div from runs array
+function runsToDOM(div,runs,font,fontSize){
+  div.innerHTML='';
+  const text=runsToText(runs);
+  if(!text){return;}
+  const allChars=[];
+  for(const r of runs){
+    for(let i=0;i<r.text.length;i++){
+      allChars.push({ch:r.text[i],color:r.color,bold:r.bold,italic:r.italic});
+    }
+  }
+  // Build spans grouped by formatting
+  let cur=null;
+  for(const c of allChars){
+    if(c.ch==='\n'){
+      if(cur){div.appendChild(makeSpan(cur));cur=null;}
+      div.appendChild(document.createElement('br'));
+      continue;
+    }
+    if(!cur||cur.color!==c.color||cur.bold!==c.bold||cur.italic!==c.italic){
+      if(cur) div.appendChild(makeSpan(cur));
+      cur={text:'',color:c.color,bold:c.bold,italic:c.italic};
+    }
+    cur.text+=c.ch;
+  }
+  if(cur) div.appendChild(makeSpan(cur));
+}
+function makeSpan(run){
+  const sp=document.createElement('span');
+  sp.textContent=run.text;
+  sp.style.color=run.color;
+  sp.style.fontWeight=run.bold?'bold':'normal';
+  sp.style.fontStyle=run.italic?'italic':'normal';
+  return sp;
+}
+// Extract runs array from contentEditable div DOM
+function domToRuns(div){
+  const runs=[];
+  function getStyle(node){
+    let color=null,bold=null,italic=null;
+    let el=node.nodeType===3?node.parentElement:node;
+    while(el&&el!==div){
+      // Check tag-based formatting (from execCommand)
+      const tag=el.tagName;
+      if((tag==='B'||tag==='STRONG')&&bold===null) bold=true;
+      if((tag==='I'||tag==='EM')&&italic===null) italic=true;
+      if(tag==='FONT'&&color===null){
+        const fc=el.getAttribute('color');
+        if(fc) color=fc;
+      }
+      // Check inline style (only if not already set by inner element)
+      const cs=el.style;
+      if(cs&&cs.color&&color===null) color=cs.color;
+      if(cs&&(cs.fontWeight==='bold'||cs.fontWeight==='700')&&bold===null) bold=true;
+      else if(cs&&(cs.fontWeight==='normal'||cs.fontWeight==='400')&&bold===null) bold=false;
+      if(cs&&cs.fontStyle==='italic'&&italic===null) italic=true;
+      else if(cs&&cs.fontStyle==='normal'&&italic===null) italic=false;
+      el=el.parentElement;
+    }
+    // Fall back to defaults
+    if(color===null) color=S.color;
+    if(bold===null) bold=S.textBold;
+    if(italic===null) italic=S.textItalic;
+    color=normalizeColor(color);
+    return{color,bold,italic};
+  }
+  function walk(node){
+    if(node.nodeType===3){
+      const text=node.textContent;
+      if(!text) return;
+      const st=getStyle(node);
+      // Merge with last run if same style
+      const last=runs[runs.length-1];
+      if(last&&last.color===st.color&&last.bold===st.bold&&last.italic===st.italic){
+        last.text+=text;
+      }else{
+        runs.push({text,color:st.color,bold:st.bold,italic:st.italic});
+      }
+      return;
+    }
+    if(node.nodeName==='BR'){
+      const last=runs[runs.length-1];
+      if(last) last.text+='\n';
+      else runs.push({text:'\n',color:S.color,bold:S.textBold,italic:S.textItalic});
+      return;
+    }
+    if(node.nodeName==='DIV'||node.nodeName==='P'){
+      // Block element = newline (unless it's the first child)
+      if(runs.length>0){
+        const last=runs[runs.length-1];
+        if(last.text&&!last.text.endsWith('\n')) last.text+='\n';
+      }
+    }
+    for(const ch of node.childNodes) walk(ch);
+  }
+  walk(div);
+  // Clean up trailing newlines from block-level divs
+  if(runs.length>0){
+    const last=runs[runs.length-1];
+    last.text=last.text.replace(/\n$/,'');
+  }
+  // Remove empty runs
+  return runs.filter(r=>r.text.length>0);
+}
+function normalizeColor(c){
+  if(!c) return '#1a1a1a';
+  if(c.startsWith('#')) return c;
+  // rgb(r,g,b) → #hex
+  const m=c.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
+  if(m) return '#'+[m[1],m[2],m[3]].map(x=>(+x).toString(16).padStart(2,'0')).join('');
+  return c;
+}
+// Apply execCommand for rich text formatting in contentEditable
+function applyRichFormat(cmd,val){
+  const ta=$('#ta');
+  ta.focus();
+  if(cmd==='foreColor'){
+    document.execCommand('foreColor',false,val);
+  }else if(cmd==='bold'){
+    document.execCommand('bold',false,null);
+  }else if(cmd==='italic'){
+    document.execCommand('italic',false,null);
+  }
+}
+// Word-wrap runs, returns array of lines, each line is array of {text,color,bold,italic}
+function wrapRuns(ctx,runs,maxW,font,fontSize){
+  if(!runs||!runs.length) return[[{text:'',color:'#1a1a1a',bold:false,italic:false}]];
+  const result=[];
+  // Flatten runs into segments split by newlines
+  const flatSegs=[];
+  for(const r of runs){
+    const parts=r.text.split('\n');
+    for(let pi=0;pi<parts.length;pi++){
+      if(pi>0) flatSegs.push({text:'\n',color:r.color,bold:r.bold,italic:r.italic,isNL:true});
+      if(parts[pi]) flatSegs.push({text:parts[pi],color:r.color,bold:r.bold,italic:r.italic,isNL:false});
+    }
+  }
+  // Now process paragraph by paragraph
+  let curPara=[];
+  function flushPara(){
+    if(curPara.length===0){result.push([{text:'',color:'#1a1a1a',bold:false,italic:false}]);return;}
+    // Word-wrap the paragraph segments
+    // Tokenize each segment into words (preserving CJK as single chars)
+    const tokens=[];// {text, color, bold, italic, isSpace}
+    for(const seg of curPara){
+      const re=/[\u3000-\u9fff\uf900-\ufaff]|[^\s\u3000-\u9fff\uf900-\ufaff]+/g;
+      let m,lastEnd=0;
+      const t=seg.text;
+      while((m=re.exec(t))!==null){
+        // Any whitespace before this match
+        if(m.index>lastEnd){
+          tokens.push({text:t.slice(lastEnd,m.index),color:seg.color,bold:seg.bold,italic:seg.italic,isSpace:true});
+        }
+        tokens.push({text:m[0],color:seg.color,bold:seg.bold,italic:seg.italic,isSpace:false});
+        lastEnd=m.index+m[0].length;
+      }
+      if(lastEnd<t.length){
+        tokens.push({text:t.slice(lastEnd),color:seg.color,bold:seg.bold,italic:seg.italic,isSpace:true});
+      }
+    }
+    // Now wrap tokens into lines
+    let line=[];let lineW=0;
+    function measureToken(tok){
+      ctx.font=(tok.italic?'italic ':'')+(tok.bold?'bold ':'')+fontSize+'px '+font;
+      return ctx.measureText(tok.text).width;
+    }
+    function pushLine(){if(line.length>0){result.push(mergeLineRuns(line));line=[];lineW=0;}}
+    for(let ti=0;ti<tokens.length;ti++){
+      const tok=tokens[ti];
+      const tw=measureToken(tok);
+      if(lineW+tw>maxW&&line.length>0&&!tok.isSpace){
+        // Wrap: push current line, start new with this token
+        pushLine();
+        line.push({text:tok.text,color:tok.color,bold:tok.bold,italic:tok.italic});
+        lineW=tw;
+      }else{
+        line.push({text:tok.text,color:tok.color,bold:tok.bold,italic:tok.italic});
+        lineW+=tw;
+      }
+    }
+    pushLine();
+    curPara=[];
+  }
+  for(const seg of flatSegs){
+    if(seg.isNL){flushPara();}
+    else curPara.push(seg);
+  }
+  flushPara();
+  return result;
+}
+function mergeLineRuns(tokens){
+  const merged=[];
+  for(const t of tokens){
+    const last=merged[merged.length-1];
+    if(last&&last.color===t.color&&last.bold===t.bold&&last.italic===t.italic){
+      last.text+=t.text;
+    }else{
+      merged.push({text:t.text,color:t.color,bold:t.bold,italic:t.italic});
+    }
+  }
+  return merged;
+}
 
 /* ── Render ── */
 async function renderPage(){
@@ -661,17 +924,28 @@ function replay(){
   dX.clearRect(0,0,dC.width,dC.height);
   (S.annotations[S.currentPage]||[]).forEach((a,i)=>{
     if(a.type==='text'&&i===S.editIdx){
-      // Draw current textarea content on canvas (visible in Present window)
-      const text=ta.value||'';
+      // Draw current contentEditable content on canvas (visible in Present window)
+      const runs=domToRuns(ta);
+      const text=runsToText(runs);
       if(text){
-        dX.save();dX.globalAlpha=0.6;dX.fillStyle=a.color||S.color;
-        dX.font=(S.textItalic?'italic ':'')+(S.textBold?'bold ':'')+
-          (a.fontSize||S.textSize)+'px '+(a.font||S.textFont);
+        dX.save();dX.globalAlpha=0.6;
         const ww=a.wrapW||(dC.width-a.x-10);
         const maxW=ww>50?ww:dC.width;
-        const lines=wrapText(dX,text,maxW);
-        const lh=(a.fontSize||S.textSize)*(a.lh||1.25);
-        lines.forEach((l,j)=>dX.fillText(l,a.x,a.y+(j+1)*lh));
+        const fnt=a.font||S.textFont;
+        const fsz=a.fontSize||S.textSize;
+        const lhm=a.lh||1.25;
+        const lh=fsz*lhm;
+        const lines=wrapRuns(dX,runs,maxW,fnt,fsz);
+        lines.forEach((lineRuns,j)=>{
+          let wx=a.x;
+          const ly=a.y+(j+1)*lh;
+          lineRuns.forEach(r=>{
+            dX.fillStyle=r.color;
+            dX.font=(r.italic?'italic ':'')+(r.bold?'bold ':'')+fsz+'px '+fnt;
+            dX.fillText(r.text,wx,ly);
+            wx+=dX.measureText(r.text).width;
+          });
+        });
         dX.restore();
       }
       return;
@@ -834,37 +1108,73 @@ function drawImg(a,ctx,r){
   ctx.restore();
 }
 function drawTxt(a){
-  dX.save();dX.globalAlpha=1.0;dX.fillStyle=a.color;
-  dX.font=(a.italic?'italic ':'')+(a.bold?'bold ':'')+a.fontSize+'px '+a.font;
-  // Use stored wrapW, or calculate from position
+  ensureRuns(a);
+  dX.save();dX.globalAlpha=1.0;
   const ww=a.wrapW||(dC.width-a.x-10);
   const maxW=ww>50?ww:dC.width;
-  const lines=wrapText(dX,a.text,maxW);
+  if(!a.wrapW) a.wrapW=maxW;
   const lhm=a.lh||1.25;
   const lh=a.fontSize*lhm;
-  if(!a.wrapW) a.wrapW=maxW; // store for future use
-  lines.forEach((l,i)=>{
+  const lines=wrapRuns(dX,a.runs,maxW,a.font,a.fontSize);
+  lines.forEach((lineRuns,i)=>{
     const ly=a.y+(i+1)*lh;
+    // Measure total line width for alignment
+    let totalW=0;
+    lineRuns.forEach(r=>{
+      dX.font=(r.italic?'italic ':'')+(r.bold?'bold ':'')+a.fontSize+'px '+a.font;
+      totalW+=dX.measureText(r.text).width;
+    });
     if(a.align==='justify'&&i<lines.length-1){
       // Justify: distribute extra space between words
-      const words=l.trim().split(/\s+/);
-      if(words.length>1){
-        const totalWordW=words.reduce((s,w)=>s+dX.measureText(w).width,0);
-        const gap=(maxW-totalWordW)/(words.length-1);
+      // Collect all words across runs with their styles
+      const wordEntries=[];
+      for(const r of lineRuns){
+        const words=r.text.split(/(\s+)/);
+        for(const w of words){
+          if(w) wordEntries.push({text:w,color:r.color,bold:r.bold,italic:r.italic,isSpace:/^\s+$/.test(w)});
+        }
+      }
+      const nonSpaceWords=wordEntries.filter(w=>!w.isSpace);
+      if(nonSpaceWords.length>1){
+        let totalWordW=0;
+        nonSpaceWords.forEach(w=>{
+          dX.font=(w.italic?'italic ':'')+(w.bold?'bold ':'')+a.fontSize+'px '+a.font;
+          totalWordW+=dX.measureText(w.text).width;
+        });
+        const gap=(maxW-totalWordW)/(nonSpaceWords.length-1);
         let wx=a.x;
-        words.forEach((w,j)=>{dX.fillText(w,wx,ly);wx+=dX.measureText(w).width+gap;});
-      } else {dX.fillText(l,a.x,ly);}
-    } else if(a.align==='center'){
-      const tw=dX.measureText(l).width;
-      dX.fillText(l,a.x+(maxW-tw)/2,ly);
-    } else if(a.align==='right'){
-      const tw=dX.measureText(l).width;
-      dX.fillText(l,a.x+maxW-tw,ly);
-    } else {
-      dX.fillText(l,a.x,ly);
+        let nsIdx=0;
+        for(const w of wordEntries){
+          if(w.isSpace) continue;
+          dX.fillStyle=w.color;
+          dX.font=(w.italic?'italic ':'')+(w.bold?'bold ':'')+a.fontSize+'px '+a.font;
+          dX.fillText(w.text,wx,ly);
+          wx+=dX.measureText(w.text).width+gap;
+          nsIdx++;
+        }
+      }else{
+        let wx=a.x;
+        lineRuns.forEach(r=>{
+          dX.fillStyle=r.color;
+          dX.font=(r.italic?'italic ':'')+(r.bold?'bold ':'')+a.fontSize+'px '+a.font;
+          dX.fillText(r.text,wx,ly);
+          wx+=dX.measureText(r.text).width;
+        });
+      }
+    }else{
+      let offsetX=0;
+      if(a.align==='center') offsetX=(maxW-totalW)/2;
+      else if(a.align==='right') offsetX=maxW-totalW;
+      let wx=a.x+offsetX;
+      lineRuns.forEach(r=>{
+        dX.fillStyle=r.color;
+        dX.font=(r.italic?'italic ':'')+(r.bold?'bold ':'')+a.fontSize+'px '+a.font;
+        dX.fillText(r.text,wx,ly);
+        wx+=dX.measureText(r.text).width;
+      });
     }
   });
-  a._w=Math.max(maxW,...lines.map(l=>dX.measureText(l).width));a._h=lines.length*lh;
+  a._w=maxW;a._h=lines.length*lh;
   dX.restore();
 }
 function drawShape(a,ctx,r){
@@ -1250,35 +1560,56 @@ const tov=$('#tov'),ta=$('#ta');let commitGuard=false;
 function openNewText(e){
   S.editIdx=-1;const r=dC.getBoundingClientRect();const x=e.clientX-r.left,y=e.clientY-r.top;
   tov.style.display='block';tov.style.left=x+'px';tov.style.top=y+'px';tov._sx=x;tov._sy=y;tov._cx=null;tov._cy=null;
-  ta.value='';updTA();ta.style.color=S.color;ta.style.width='220px';ta.style.height='36px';
+  ta.innerHTML='';updTA();ta.style.color=S.color;ta.style.width='220px';ta.style.height='36px';
   dC.style.pointerEvents='none';commitGuard=false;setTimeout(()=>ta.focus(),50);
 }
 function openEditText(idx){
   const a=(S.annotations[S.currentPage]||[])[idx];if(!a) return;
+  ensureRuns(a);
   S.editIdx=idx;replay(); // hide from canvas
-  S.textFont=a.font;S.textSize=a.fontSize;S.textBold=a.bold||false;S.textItalic=a.italic||false;S.color=a.color;S.alpha=a.alpha;
+  S.textFont=a.font;S.textSize=a.fontSize;
+  // Use first run's style for toolbar defaults
+  const r0=a.runs[0]||{color:'#1a1a1a',bold:false,italic:false};
+  S.textBold=r0.bold;S.textItalic=r0.italic;S.color=r0.color;
+  S.alpha=1.0;
   $('#fSel').value=a.font;$('#fSize').value=a.fontSize;$('#btnB').classList.toggle('on',S.textBold);$('#btnI').classList.toggle('on',S.textItalic);
-  const r=dC.getBoundingClientRect(),sx=a.x*r.width/dC.width,sy=a.y*r.height/dC.height;
+  const rc=dC.getBoundingClientRect(),sx=a.x*rc.width/dC.width,sy=a.y*rc.height/dC.height;
   tov.style.display='block';tov.style.left=sx+'px';tov.style.top=sy+'px';tov._sx=sx;tov._sy=sy;tov._cx=a.x;tov._cy=a.y;
-  ta.value=a.text;updTA();ta.style.color=a.color;
+  // Populate contentEditable from runs
+  runsToDOM(ta,a.runs,a.font,a.fontSize);
+  updTA();
   // Highlight palette color
-  $$('.cs').forEach(s=>{s.classList.toggle('on',s.dataset.color===a.color);});
-  const lines=a.text.split('\n');
-  ta.style.width=Math.max(220,(a._w||200)*r.width/dC.width+24)+'px';
-  ta.style.height=Math.max(36,lines.length*a.fontSize*1.25*r.height/dC.height+16)+'px';
-  dC.style.pointerEvents='none';commitGuard=false;setTimeout(()=>{ta.focus();ta.setSelectionRange(ta.value.length,ta.value.length);},50);
+  $$('.cs').forEach(s=>{s.classList.toggle('on',s.dataset.color===r0.color);});
+  const text=runsToText(a.runs);
+  const lines=text.split('\n');
+  ta.style.width=Math.max(220,(a._w||200)*rc.width/dC.width+24)+'px';
+  ta.style.height=Math.max(36,lines.length*a.fontSize*1.25*rc.height/dC.height+16)+'px';
+  dC.style.pointerEvents='none';commitGuard=false;setTimeout(()=>{ta.focus();
+    // Place cursor at end
+    const sel=window.getSelection();sel.selectAllChildren(ta);sel.collapseToEnd();
+  },50);
 }
 function hideTO(){tov.style.display='none';dC.style.pointerEvents='auto';S.editIdx=-1;}
 
 function commitText(){
   if(commitGuard)return;commitGuard=true;
-  const text=ta.value.trim();if(!text){S.editIdx=-1;hideTO();replay();return;}
+  const runs=domToRuns(ta);
+  const text=runsToText(runs).trim();
+  if(!text){S.editIdx=-1;hideTO();replay();return;}
   const r=dC.getBoundingClientRect(),scX=dC.width/r.width,scY=dC.height/r.height;
   const cx=tov._cx!==null?tov._cx:tov._sx*scX,cy=tov._cy!==null?tov._cy:tov._sy*scY;
   const lines=text.split('\n'),lh=S.textSize*(S.textLH||1.25);
   dX.font=(S.textItalic?'italic ':'')+(S.textBold?'bold ':'')+S.textSize+'px '+S.textFont;
   const mw=Math.max(...lines.map(l=>dX.measureText(l).width));
-  const an={type:'text',text,x:cx,y:cy,color:S.color,alpha:S.alpha,font:S.textFont,fontSize:S.textSize,bold:S.textBold,italic:S.textItalic,align:S.textAlign,lh:S.textLH,_w:mw,_h:lines.length*lh};
+  // Trim whitespace from run texts (only leading/trailing of entire text)
+  const trimmedRuns=JSON.parse(JSON.stringify(runs));
+  if(trimmedRuns.length>0){
+    trimmedRuns[0].text=trimmedRuns[0].text.replace(/^\s+/,'');
+    trimmedRuns[trimmedRuns.length-1].text=trimmedRuns[trimmedRuns.length-1].text.replace(/\s+$/,'');
+  }
+  const finalRuns=trimmedRuns.filter(r=>r.text.length>0);
+  if(!finalRuns.length){S.editIdx=-1;hideTO();replay();return;}
+  const an={type:'text',runs:finalRuns,x:cx,y:cy,font:S.textFont,fontSize:S.textSize,align:S.textAlign,lh:S.textLH,_w:mw,_h:lines.length*lh};
   const pg=S.currentPage,idx=S.editIdx;
   if(idx>=0&&S.annotations[pg]&&idx<S.annotations[pg].length){
     const old=S.annotations[pg][idx];
@@ -1290,7 +1621,7 @@ function commitText(){
 }
 ta.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();commitText();}if(e.key==='Escape'){S.editIdx=-1;hideTO();replay();}e.stopPropagation();});
 ta.addEventListener('input',()=>{if(S.editIdx>=0) replay();}); // update Present window in real-time
-ta.addEventListener('blur',()=>{setTimeout(()=>{if(tov.style.display==='none')return;if(commitGuard)return;if(ta.value.trim())commitText();else{S.editIdx=-1;hideTO();replay();}},200);});
+ta.addEventListener('blur',()=>{setTimeout(()=>{if(tov.style.display==='none')return;if(commitGuard)return;if(ta.textContent.trim())commitText();else{S.editIdx=-1;hideTO();replay();}},200);});
 
 /* ── Annotations, Undo/Redo ── */
 function pushAn(a){
@@ -1481,7 +1812,7 @@ $('#btnZI').onclick=()=>{S.zoom=Math.min(3,+(S.zoom+0.25).toFixed(2));updZ();};
 $('#btnZO').onclick=()=>{S.zoom=Math.max(0.25,+(S.zoom-0.25).toFixed(2));updZ();};
 
 /* ── Save ── */
-function renderAnToCtx(ctx,annots,ratio){annots.forEach(a=>{if(a.type==='stroke'&&a.points.length>=2){ctx.save();ctx.globalAlpha=a.alpha;ctx.strokeStyle=a.color;ctx.lineWidth=a.lineWidth*ratio;ctx.lineCap='round';ctx.lineJoin='round';ctx.beginPath();ctx.moveTo(a.points[0].x*ratio,a.points[0].y*ratio);for(let i=1;i<a.points.length;i++)ctx.lineTo(a.points[i].x*ratio,a.points[i].y*ratio);ctx.stroke();ctx.restore();}if(a.type==='text'){ctx.save();ctx.globalAlpha=1.0;ctx.fillStyle=a.color;const sz=a.fontSize*ratio;ctx.font=(a.italic?'italic ':'')+(a.bold?'bold ':'')+sz+'px '+a.font;const ww=a.wrapW?(a.wrapW*ratio):(ctx.canvas.width-a.x*ratio-10);const maxW=ww>50?ww:ctx.canvas.width;const lines=wrapText(ctx,a.text,maxW);const lh=a.fontSize*(a.lh||1.25);lines.forEach((l,i)=>{const ly=(a.y+(i+1)*lh)*ratio;if(a.align==='justify'&&i<lines.length-1){const words=l.trim().split(/\s+/);if(words.length>1){const tw2=words.reduce((s,w)=>s+ctx.measureText(w).width,0);const gap=(maxW-tw2)/(words.length-1);let wx=a.x*ratio;words.forEach(w=>{ctx.fillText(w,wx,ly);wx+=ctx.measureText(w).width+gap;});}else ctx.fillText(l,a.x*ratio,ly);}else if(a.align==='center'){ctx.fillText(l,a.x*ratio+(maxW-ctx.measureText(l).width)/2,ly);}else if(a.align==='right'){ctx.fillText(l,a.x*ratio+maxW-ctx.measureText(l).width,ly);}else ctx.fillText(l,a.x*ratio,ly);});ctx.restore();}if(a.type==='shape'){drawShape(a,ctx,ratio);}if(a.type==='image'){drawImg(a,ctx,ratio);}});}
+function renderAnToCtx(ctx,annots,ratio){annots.forEach(a=>{if(a.type==='stroke'&&a.points.length>=2){ctx.save();ctx.globalAlpha=a.alpha;ctx.strokeStyle=a.color;ctx.lineWidth=a.lineWidth*ratio;ctx.lineCap='round';ctx.lineJoin='round';ctx.beginPath();ctx.moveTo(a.points[0].x*ratio,a.points[0].y*ratio);for(let i=1;i<a.points.length;i++)ctx.lineTo(a.points[i].x*ratio,a.points[i].y*ratio);ctx.stroke();ctx.restore();}if(a.type==='text'){ensureRuns(a);ctx.save();ctx.globalAlpha=1.0;const sz=a.fontSize*ratio;const ww=a.wrapW?(a.wrapW*ratio):(ctx.canvas.width-a.x*ratio-10);const maxW=ww>50?ww:ctx.canvas.width;const lhm=a.lh||1.25;const lh=a.fontSize*lhm;const lines=wrapRuns(ctx,a.runs,maxW,a.font,sz);lines.forEach((lineRuns,i)=>{const ly=(a.y+(i+1)*lh)*ratio;let totalW=0;lineRuns.forEach(r=>{ctx.font=(r.italic?'italic ':'')+(r.bold?'bold ':'')+sz+'px '+a.font;totalW+=ctx.measureText(r.text).width;});if(a.align==='justify'&&i<lines.length-1){const wordEntries=[];for(const r of lineRuns){const words=r.text.split(/(\s+)/);for(const w of words){if(w)wordEntries.push({text:w,color:r.color,bold:r.bold,italic:r.italic,isSpace:/^\s+$/.test(w)});}}const nonSpaceWords=wordEntries.filter(w=>!w.isSpace);if(nonSpaceWords.length>1){let tww=0;nonSpaceWords.forEach(w=>{ctx.font=(w.italic?'italic ':'')+(w.bold?'bold ':'')+sz+'px '+a.font;tww+=ctx.measureText(w.text).width;});const gap=(maxW-tww)/(nonSpaceWords.length-1);let wx=a.x*ratio;for(const w of wordEntries){if(w.isSpace)continue;ctx.fillStyle=w.color;ctx.font=(w.italic?'italic ':'')+(w.bold?'bold ':'')+sz+'px '+a.font;ctx.fillText(w.text,wx,ly);wx+=ctx.measureText(w.text).width+gap;}}else{let wx=a.x*ratio;lineRuns.forEach(r=>{ctx.fillStyle=r.color;ctx.font=(r.italic?'italic ':'')+(r.bold?'bold ':'')+sz+'px '+a.font;ctx.fillText(r.text,wx,ly);wx+=ctx.measureText(r.text).width;});}}else{let offsetX=0;if(a.align==='center')offsetX=(maxW-totalW)/2;else if(a.align==='right')offsetX=maxW-totalW;let wx=a.x*ratio+offsetX;lineRuns.forEach(r=>{ctx.fillStyle=r.color;ctx.font=(r.italic?'italic ':'')+(r.bold?'bold ':'')+sz+'px '+a.font;ctx.fillText(r.text,wx,ly);wx+=ctx.measureText(r.text).width;});}});ctx.restore();}if(a.type==='shape'){drawShape(a,ctx,ratio);}if(a.type==='image'){drawImg(a,ctx,ratio);}});}
 
 $('#btnSave').onclick=async()=>{
   try{
@@ -1717,9 +2048,9 @@ window.bakePrompt=function(){
   if(!S._promptBounds) drawPrompt();
   const b=S._promptBounds;
   const x=b?b.x+12:20,y=b?b.y+4:10;
-  pushAn({type:'text',text:S.promptText,x:x,y:y,
-    color:S.color,alpha:1.0,font:S.textFont,fontSize:S.promptSize||20,
-    bold:true,italic:false,_w:0,_h:0});
+  pushAn({type:'text',runs:[{text:S.promptText,color:S.color,bold:true,italic:false}],x:x,y:y,
+    font:S.textFont,fontSize:S.promptSize||20,
+    _w:0,_h:0});
   replay();
 };
 // Status text bridge
@@ -1755,9 +2086,9 @@ function revealNext(){
   REV._statusText='#'+(REV.selIdx+1)+' | '+REV.idx+'/'+REV.tokens.length;
   if(REV.idx>=REV.tokens.length){
     const fullText=REV.tokens.slice(0,REV.idx).join('');
-    pushAn({type:'text',text:fullText,x:REV.x,y:REV.y,
-      color:S.color,alpha:1.0,font:S.textFont,fontSize:S.textSize,
-      bold:S.textBold,italic:S.textItalic,align:S.textAlign,lh:S.textLH,_w:0,_h:0});
+    pushAn({type:'text',runs:[{text:fullText,color:S.color,bold:S.textBold,italic:S.textItalic}],x:REV.x,y:REV.y,
+      font:S.textFont,fontSize:S.textSize,
+      align:S.textAlign,lh:S.textLH,_w:0,_h:0});
     REV.active=false;stopRevealAuto();hideRevCursor();
     REV.boxes[REV.selIdx].status='done';renderRevBoxes();
     // Auto-switch to Select with the new annotation selected
@@ -1897,7 +2228,7 @@ window.addEventListener('beforeunload',()=>{if(presWin&&!presWin.closed)presWin.
 
 /* ── Keys ── */
 document.addEventListener('keydown',e=>{
-  if(e.target===ta||e.target.closest('.rev-box')) return;
+  if(e.target===ta||e.target.closest('#ta')||e.target.closest('.rev-box')) return;
   // Space bar continues reveal, Backspace goes back one word
   if(e.key===' '&&REV.active){e.preventDefault();revealNext();return;}
   if(e.key==='Backspace'&&REV.active&&REV.idx>0){e.preventDefault();revealPrev();return;}

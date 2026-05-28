@@ -23,41 +23,54 @@ LecturePad is an open-source, browser-based lecture annotation tool distributed 
 
 The distinguishing feature of LecturePad is its Type mode, which enables sequential text revelation: educators prepare answer text in advance and reveal it one token at a time during class by pressing the spacebar. English text is revealed word by word; Japanese (and other CJK) text is revealed character by character. This approach implements the segmenting principle of multimedia learning [@mayer2009; @mayer2001], which holds that learners achieve deeper understanding when information is presented in user-paced segments rather than as a continuous unit. A separate presenter window (Present mode) displays only the canvas to the projector, while the educator retains access to the full control interface, including the prepared answer text. Students therefore perceive the text as being typed in real time, while the educator can face the class and speak without interruption.
 
-LecturePad supports multi-tab workspaces (multiple PDFs and whiteboards simultaneously), configurable board sizes (4:3, 16:9, A4, Letter), freehand drawing, geometric shapes (line, arrow, circle, ellipse, rectangle, rounded rectangle), text annotations with font/size/alignment/line-height controls, a fading laser pointer, annotation locking, undo/redo, zoom with scroll synchronization to the presenter window, PDF export with baked-in annotations, and session save/restore. An iPad-native wrapper is also provided.
+LecturePad also supports multi-tab workspaces, configurable board sizes, freehand drawing, geometric shapes, rich text annotations with per-character color and bold/italic formatting, image import, a fading laser pointer, annotation locking, copy/paste, undo/redo, zoom, PDF export, and session save/restore.
 
 # Statement of Need
 
-In language and science courses, educators frequently need to present model answers step by step, allowing students time to think before each word appears. Research on active learning consistently demonstrates that student engagement improves when learners are given time to process information incrementally rather than passively receiving complete blocks of content [@freeman2014; @prince2004]. The conventional approach is to type answers live during class, which introduces typing errors, forces the educator to face the screen rather than the students, and consumes class time. Presentation software such as PowerPoint or Keynote can display pre-made text, but only as a complete block, eliminating the pedagogically valuable pacing control that the segmenting principle identifies as beneficial for learning [@mayer2009; @brame2016].
+In language and science courses, educators frequently present model answers step by step. Research on active learning demonstrates that engagement improves with incremental information processing [@freeman2014; @prince2004]. Typing answers live introduces errors and forces the educator to face the screen. Presentation software displays pre-made text as a complete block, eliminating the pacing control that the segmenting principle identifies as beneficial [@mayer2009; @brame2016].
 
-Existing annotation tools such as MetaMoji Note [@metamoji], GoodNotes [@goodnotes], and Xournal++ [@xournalpp] provide freehand drawing and text placement, but none offers a mechanism for pre-loaded text to be revealed incrementally during a lecture. Furthermore, these tools require installation, platform-specific licenses, or cloud accounts.
+Existing tools such as MetaMoji Note [@metamoji], GoodNotes [@goodnotes], and Xournal++ [@xournalpp] provide freehand drawing and text placement but none offers incremental text revelation. They also require installation, platform-specific licenses, or cloud accounts.
 
-LecturePad addresses these gaps with three combined capabilities that, to the authors' knowledge, are not available together in any existing tool:
-
-1. **Sequential text revelation (Type mode):** Pre-prepared text is displayed token by token via spacebar or auto-timer, with independent text boxes that can be individually reset and repositioned.
-2. **Asymmetric display (Present mode):** A separate window shows only the annotated canvas. The educator's control panel, including all prepared text, remains hidden from students.
-3. **Zero infrastructure:** The entire application is a single HTML file (~1500 lines) with no server, no account, and no installation requirement. It runs on Mac, Windows, Chromebook, and iPad.
+LecturePad addresses these gaps with three combined capabilities not available together in any existing tool: (1) sequential text revelation via spacebar or auto-timer, (2) asymmetric display that hides the control interface from students, and (3) zero infrastructure as a single HTML file requiring no server, account, or installation.
 
 # Key Features
 
 | Feature | Description |
 |---------|-------------|
-| Type mode | Multiple independent text boxes; spacebar or auto-timer revelation; English word-by-word, CJK character-by-character |
-| Present mode | Separate projector window mirroring the educator's viewport (zoom and scroll synchronized) |
-| Prompt overlay | Persistent question text displayed at the canvas top; configurable color, opacity, alignment, font size; movable in Select mode |
-| Annotation tools | Pen, text (with justify/align, line height, word wrap), eraser, laser pointer, geometric shapes |
-| Select mode | Click or Shift+click multi-select; drag to move; arrow keys for fine positioning; right-bottom handle for text box resize; Delete to remove |
-| Lock | Selected annotations can be locked to prevent accidental modification or deletion |
-| PDF workflow | Open PDF, annotate, export as annotated PDF; session save/restore as JSON |
-| Board sizes | 4:3, 16:9, A4, A4 Landscape, Letter, Letter Landscape; grid overlay toggle |
-| Cross-platform | Browser (Mac/Win/Linux/Chromebook); iPad native app via WKWebView wrapper; PWA for offline use |
+| Type mode | Multiple independent text boxes per tab; spacebar or auto-timer revelation; word-by-word for English, character-by-character for CJK; separate popup control window |
+| Present mode | Separate projector window mirroring the educator's visible canvas; cursor position visible to students |
+| Rich text | Per-character color, bold, and italic within a single text box; contentEditable editing with real-time canvas preview |
+| Prompt overlay | Persistent question text at canvas top; configurable colors, opacity, alignment, font size, line height; per-tab settings |
+| Annotation tools | Pen, text, eraser, laser pointer, line, arrow, circle, ellipse, rectangle, rounded rectangle, image import |
+| Select mode | Multi-select, drag, arrow keys, corner-handle resize, scale slider, lock/unlock, copy/paste across pages |
+| PDF workflow | Open PDF, annotate, export annotated PDF; session save/restore as JSON with per-tab Type boxes and Prompt |
+| Board sizes | 4:3, 16:9, A4, A4 Landscape, Letter, Letter Landscape; grid overlay; add pages |
+| Tabs | Rename (double-click), reorder (drag), pop out to window; per-tab annotations, Type boxes, and Prompt |
+| Cross-platform | PWA on any browser (Mac/Win/Linux/Chromebook/iPad/Android); optional iPad native app via WKWebView |
+
+# State of the Field
+
+PowerPoint and Keynote remain the dominant lecture tools but lack real-time annotation and incremental text display. MetaMoji Note [@metamoji] and GoodNotes [@goodnotes] provide tablet-based pen input and PDF annotation but require platform-specific installation and paid licenses; neither supports sequential text revelation. Xournal++ [@xournalpp] is an open-source desktop alternative for pen-based annotation but similarly lacks timed text display. None of these tools combines sequential text revelation with asymmetric display in a zero-infrastructure package.
+
+# Software Design
+
+LecturePad is a single HTML file (~2300 lines) with embedded CSS and JavaScript. Two external libraries are loaded from CDN: pdf.js [@pdfjs] for PDF rendering and jsPDF [@jspdf] for PDF export. A service worker caches all resources for offline PWA operation.
+
+Two layered HTML5 `<canvas>` elements separate the static background (PDF or whiteboard) from annotations, allowing independent redraw. Present mode opens a second browser window that reads canvas content via `window.opener` at display refresh rate. Type mode opens a separate popup window for controls, keeping the main toolbar stable and preventing Present window jitter.
+
+Text annotations use a runs-based data model where each annotation contains an array of styled segments, enabling per-character color and bold/italic formatting. A contentEditable div provides the editing interface with real-time canvas preview. Type mode maintains per-tab text boxes, each tokenized into words or CJK characters. All state is persisted to IndexedDB for automatic session recovery.
+
+# Research Impact Statement
+
+LecturePad has been used in English composition and pharmaceutical science courses at Kyoto Pharmaceutical University. Type mode enables word-by-word presentation of model answers synchronized with verbal explanation, a style of instruction previously possible only with a physical blackboard. This is relevant to any discipline where stepwise text presentation is pedagogically valuable, including language instruction, mathematics, and programming. By requiring no installation or accounts, LecturePad lowers adoption barriers for educators without institutional IT support.
+
+# AI Usage Disclosure
+
+An AI assistant (Claude, Anthropic) was used for code organization and English editing of the manuscript. The software concept, architectural design, feature specifications, and all pedagogical rationale originate entirely from the author based on over twenty years of teaching experience. The author takes full responsibility for the software and the manuscript.
 
 # Software Availability and Use
 
-LecturePad is available at [https://github.com/takeshi-sato-dev/lecturepad](https://github.com/takeshi-sato-dev/lecturepad) under the MIT License. To use it, download `LecturePad.html` and open it in a browser. No build step or dependency installation is required; pdf.js and jsPDF are loaded from a CDN on first use and cached by the service worker for subsequent offline use.
-
-For iPad deployment, a shell script (`make_ipad_app.sh`) generates a complete Xcode project that bundles all dependencies locally. A free Apple ID is sufficient for installation on personal devices.
-
-Detailed usage instructions and keyboard shortcuts are provided in the repository README.
+LecturePad is available at [https://github.com/takeshi-sato-dev/lecturepad](https://github.com/takeshi-sato-dev/lecturepad) under the GPL-3.0 License. Download `LecturePad.html` and open it in a browser. No build step is required. Usage instructions are provided in the repository README.
 
 # Author Contributions
 
