@@ -1723,7 +1723,7 @@ sessionInput.onchange=async e=>{
     if(!Array.isArray(raw)&&raw.typeBoxes&&!data[0].typeBoxes){
       tabs[0].typeBoxes=raw.typeBoxes;
     }
-    if(!Array.isArray(raw)&&raw.prompt&&!data[0].prompt.text){
+    if(!Array.isArray(raw)&&raw.prompt&&(!data[0].prompt||!data[0].prompt.text)){
       tabs[0].prompt=raw.prompt;
     }
     renderTabs();
@@ -2164,7 +2164,7 @@ $('#btnPresent').onclick=()=>{
     return;
   }
   if(presWin&&!presWin.closed){presWin.focus();return;}
-  presWin=window.open('','LecturePad_Present','width=1024,height=768');
+  presWin=window.open('','LecturePad_Present','width=1024,height=768,left='+screen.width+',top=0');
   if(!presWin){alert('Pop-up blocked. Please allow pop-ups.');return;}
   presWin.document.write(`<!DOCTYPE html><html><head><title>LecturePad</title><style>
     *{margin:0;padding:0}body{background:#000;height:100vh;overflow:hidden;cursor:none}
@@ -2219,7 +2219,13 @@ $('#btnPresent').onclick=()=>{
       requestAnimationFrame(sync);
     }
     sync();
-    document.addEventListener('keydown',e=>{if(e.key==='Escape')close();});
+    document.addEventListener('keydown',e=>{
+      if(e.key==='Escape')close();
+      if(e.key==='f'||e.key==='F'){
+        if(!document.fullscreenElement) document.documentElement.requestFullscreen().catch(()=>{});
+        else document.exitFullscreen();
+      }
+    });
   <\/script></body></html>`);
   presWin.document.close();
 };
